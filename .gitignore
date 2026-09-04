@@ -1,0 +1,5 @@
+# The repository deliberately contains only its source brief and source map.
+*
+!.gitignore
+!README.md
+!report.typ
