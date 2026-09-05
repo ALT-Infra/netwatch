@@ -1,5 +1,9 @@
-# The repository deliberately contains only its source brief and source map.
+# Publishable research and visualization source only; bulk research stays local.
 *
 !.gitignore
 !README.md
 !report.typ
+!audit.md
+!architecture.html
+!architecture-3d.js
+!architecture-3d.css
