@@ -8,8 +8,7 @@ Technical research brief and source map for a graduation project that can grow i
 ## Repository contents
 
 - [`report.typ`](./report.typ) — the complete, editable research brief.
-- [`architecture.html`](./architecture.html) — interactive, offline system map; open directly in a desktop browser.
-- [`audit.md`](./audit.md) — foundation decision, release/source pins, corrected claims and evidence limits.
+- [`architecture.html`](./architecture/architecture.html) — interactive, offline system map; open directly in a desktop browser.
 - `README.md` — conclusions, deployment model, and the curated evidence map below.
 
 The repository is intentionally minimal. Full papers, cloned repositories, extracted text, model checkpoints, and rendered artifacts were inspected locally but are not committed. Every catalog entry points directly to its authoritative upstream URL and records why it mattered.
@@ -18,7 +17,7 @@ The repository is intentionally minimal. Full papers, cloned repositories, extra
 
 > Build a **brownfield, edge-first video-event engine**, not a universal cloud “threat AI.”
 
-The edge initiates ONVIF discovery/configuration and RTSP pulls from reachable cameras or NVR channels. Compressed video branches to a local evidence buffer **before** the separate decode → detect → track → rule path. Incidents link metadata to clips and operator decisions. The existing NVR keeps its own archive. A desktop browser connects to the edge's authenticated local UI; an optional hosted service receives only explicitly enabled exports. Explore the protocols, storage and ownership in the [interactive system map](./architecture.html).
+The edge initiates ONVIF discovery/configuration and RTSP pulls from reachable cameras or NVR channels. Compressed video branches to a local evidence buffer **before** the separate decode → detect → track → rule path. Incidents link metadata to clips and operator decisions. The existing NVR keeps its own archive. A desktop browser connects to the edge's authenticated local UI; an optional hosted service receives only explicitly enabled exports. Explore the protocols, storage and ownership in the [interactive system map](./architecture/architecture.html).
 
 The **edge node** is an ordinary computer at the customer’s premises. For the thesis it can be an existing Ubuntu PC or mini-PC. Commercially, the same software can be offered as either:
 
@@ -211,7 +210,7 @@ Full papers and source were screened for peer-review status, CCTV/task fit, data
 
 ## Render locally
 
-Open `architecture.html` directly in a browser: no server, install, CDN or network is needed. Select a component for its reuse boundary and source links; toggle internet availability and the first-capability view. The visualization is design documentation, not an implemented CCTV dashboard.
+Open `architecture/architecture.html` directly in a browser: no server, install, CDN or network is needed. Select a component for its reuse boundary and source links; toggle internet availability and the first-capability view. The visualization is design documentation, not an implemented CCTV dashboard.
 
 With [Typst](https://typst.app/open-source/) available, compile only to a temporary path:
 

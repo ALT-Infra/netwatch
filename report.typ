@@ -126,7 +126,7 @@ Run the data plane beside the cameras. Keep the customer’s NVR as recorder unl
 
 *The foundation exists, but the product does not yet.* Preserve the expensive Frigate internals; borrow or adapt specific algorithms from other projects only when they improve a measured outcome. Modifying code is expected. Missing plug compatibility is not evidence against reuse. Keep our incident identity, policy versions, verdicts and later outbound queue in distinct modules, initially within the same application/database. A microservice split is unnecessary.
 
-This choice is an engineering judgment, not a timed comparison. It remains the commercial path unless maintenance cost, independent scaling or a required media/CV feature justifies replacing a boundary. There is no evidence for an inevitable full rewrite. Select *one* restream owner: embedded go2rtc now; MediaMTX only if replacing that boundary. Source pins, alternatives and release obligations are in the committed #link("audit.md")[audit]. The interactive #link("architecture.html")[system map] distinguishes retained, adapted and new code.
+This choice is an engineering judgment, not a timed comparison. It remains the commercial path unless maintenance cost, independent scaling or a required media/CV feature justifies replacing a boundary. There is no evidence for an inevitable full rewrite. Select *one* restream owner: embedded go2rtc now; MediaMTX only if replacing that boundary. Source pins, alternatives and release obligations are in the local audit. The interactive #link("architecture/architecture.html")[system map] distinguishes retained, adapted and new code.
 
 == Trace one stream
 

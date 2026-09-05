@@ -3,7 +3,7 @@
 !.gitignore
 !README.md
 !report.typ
-!audit.md
-!architecture.html
-!architecture-3d.js
-!architecture-3d.css
+!architecture/
+!architecture/architecture.html
+!architecture/architecture-3d.js
+!architecture/architecture-3d.css
