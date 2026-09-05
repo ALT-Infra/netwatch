@@ -3,15 +3,31 @@
 Technical research brief and source map for a graduation project that can grow into a brownfield CCTV-analytics product.
 
 **Evidence cutoff:** 5 September 2026; independently reviewed<br>
-**Status:** research and architecture; no production implementation yet
+**Status:** implementation started — local camera onboarding foundation; no production deployment yet
+
+## Implementation
+
+The onboarding foundation includes a Python/FastAPI API, React/TypeScript camera workspace, SQLite with
+encrypted camera connections, manual RTSP checks, Docker Compose, and a private Frigate config
+handoff. The pinned Frigate development patch series starts the upstream credential hardening.
+Live video, ONVIF discovery, AI detection and event rules are not implemented yet.
+
+See [development and startup instructions](docs/development.md) and the
+[Frigate integration status](integrations/frigate/README.md).
 
 ## Repository contents
 
+- [`edge/`](./edge/) — authenticated camera API, encrypted storage, stream checks and config export.
+- [`web/`](./web/) — React/TypeScript local camera workspace.
+- [`integrations/frigate/`](./integrations/frigate/) — pinned upstream and development patch series.
+- [`docs/development.md`](./docs/development.md) — startup, verification and current limitations.
 - [`report.typ`](./report.typ) — the complete, editable research brief.
 - [`architecture.html`](./architecture/architecture.html) — interactive, offline system map; open directly in a desktop browser.
 - `README.md` — conclusions, deployment model, and the curated evidence map below.
 
-The repository is intentionally minimal. Full papers, cloned repositories, extracted text, model checkpoints, and rendered artifacts were inspected locally but are not committed. Every catalog entry points directly to its authoritative upstream URL and records why it mattered.
+The research sources below remain the architecture baseline. Full papers, upstream checkouts,
+model checkpoints, secrets and rendered artifacts are not committed. Every catalog entry points
+directly to its authoritative upstream URL and records why it mattered.
 
 ## Conclusion
 
@@ -59,7 +75,8 @@ The smallest complete capability is below. Frozen/covered/blurred detection is n
 
 Zero false incidents over 72 negative camera-hours only bounds the stationary Poisson rate at approximately one/day with one-sided 95% confidence. It is not proof across sites. Measure delivered nuisance notifications and false incidents separately, and agree a **site-wide** interruption budget before scaling; one/day/rule can multiply into dozens of alerts.
 
-This is proposed work for discussion. Implementation stops here pending approval.
+Implementation has started with the camera-onboarding foundation described above. The complete
+person-in-zone capability remains proposed work until Frigate runtime integration is validated.
 
 ## Deployment contract
 
