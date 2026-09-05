@@ -1,0 +1,7 @@
+{
+  "repository": "https://github.com/blakeblackshear/frigate.git",
+  "tag": "v0.17.2",
+  "commit": "3d4dd3ac4b00e7257bd3412608a783001d7d77ed",
+  "patches": ["patches/0001-private-probes-admin-logs.patch"],
+  "status": "development-only; full credential/log review and hardware validation remain"
+}
