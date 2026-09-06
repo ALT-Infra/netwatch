@@ -1,18 +1,15 @@
 services:
-  edge:
+  frigate:
+    image: localhost/netwatch:local
     build: .
     ports:
-      - "127.0.0.1:8000:8000"
-    env_file: .env
+      - "127.0.0.1:8971:8971"
     volumes:
-      - edge-data:/app/data
-    restart: unless-stopped
-    read_only: true
+      - ./data/config:/config
+      - ./data/media:/media/frigate
+    shm_size: "256mb"
     tmpfs:
-      - /tmp:size=64m,noexec,nosuid
-    cap_drop: [ALL]
+      - /tmp/cache:size=256m
     security_opt: [no-new-privileges:true]
-    pids_limit: 128
-
-volumes:
-  edge-data:
+    restart: unless-stopped
+    stop_grace_period: 30s

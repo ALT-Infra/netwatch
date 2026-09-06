@@ -1,6 +1,8 @@
-"""Fetch an exact upstream revision and apply our development patch series."""
+"""Fetch an exact upstream revision and apply our controlled patch series."""
 
+import argparse
 import json
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -8,7 +10,9 @@ from pathlib import Path
 def main():
     integration = Path(__file__).resolve().parent
     root = integration.parents[1]
-    target = root / "vendor" / "frigate"
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--target", type=Path, default=root / "vendor" / "frigate")
+    target = parser.parse_args().target.resolve()
     upstream = json.loads((integration / "upstream.json").read_text())
     if target.exists():
         raise SystemExit(
@@ -42,7 +46,6 @@ def main():
                 "-C",
                 str(target),
                 "apply",
-                "--unidiff-zero",
                 "--check",
                 str(integration / patch),
             ],
@@ -54,13 +57,17 @@ def main():
                 "-C",
                 str(target),
                 "apply",
-                "--unidiff-zero",
                 str(integration / patch),
             ],
             check=True,
         )
+    (target / "frigate/version.py").write_text('VERSION = "0.17.2-3d4dd3a-netwatch"\n')
+    for name in ["pnpm-lock.yaml", "pnpm-workspace.yaml"]:
+        shutil.copyfile(integration / name, target / "web" / name)
+    (target / "web/package-lock.json").unlink()
     print(
-        "Prepared vendor/frigate with the development patches. See integrations/frigate/README.md."
+        "Prepared the pinned Frigate source and Netwatch patches. "
+        "Build with uv run scripts/local.py build."
     )
 
 

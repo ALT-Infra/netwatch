@@ -126,7 +126,7 @@ Run the data plane beside the cameras. Keep the customer’s NVR as recorder unl
 
 *The foundation exists, but the product does not yet.* Preserve the expensive Frigate internals; borrow or adapt specific algorithms from other projects only when they improve a measured outcome. Modifying code is expected. Missing plug compatibility is not evidence against reuse. Keep our incident identity, policy versions, verdicts and later outbound queue in distinct modules, initially within the same application/database. A microservice split is unnecessary.
 
-This choice is an engineering judgment, not a timed comparison. It remains the commercial path unless maintenance cost, independent scaling or a required media/CV feature justifies replacing a boundary. There is no evidence for an inevitable full rewrite. Select *one* restream owner: embedded go2rtc now; MediaMTX only if replacing that boundary. Source pins, alternatives and release obligations are in the local audit. The interactive #link("architecture/architecture.html")[system map] distinguishes retained, adapted and new code.
+This choice is an engineering judgment, not a timed comparison. It remains the commercial path unless maintenance cost, independent scaling or a required media/CV feature justifies replacing a boundary. There is no evidence for an inevitable full rewrite. Select *one* restream owner: embedded go2rtc now; MediaMTX only if replacing that boundary. Source pins are in `integrations/frigate/upstream.json`; alternatives and release obligations are documented below. The interactive #link("architecture/architecture.html")[system map] distinguishes retained, adapted and new code.
 
 == Trace one stream
 
@@ -162,13 +162,13 @@ Instrument decoded-frame age separately from RTSP connectivity, plus recording a
 
 The #link("https://github.com/blakeblackshear/frigate/security/advisories/GHSA-c4qf-xxq4-vf55")[log advisory] names 0.17.1/no patch; continued 0.17.2 exposure is a separate source finding. The #link("https://github.com/blakeblackshear/frigate/security/advisories/GHSA-74x4-gw64-2mq5")[media ACL advisory] lists all versions/no patch. The #link("https://github.com/blakeblackshear/frigate/security/advisories/GHSA-q8jx-q884-jcq9")[regex advisory] lists ≤0.17.2 and a beta3 patch. Fix/redact credential flows, authorize every evidence path, disable directory listing/public caching, and remove or safely replace unsupported regex filters. Role/stream/probe regression checks are required before a pilot.
 
-Bind go2rtc to the authenticated application boundary: its LAN defaults expose streams and potentially executable source types. Keep unauthenticated Frigate/internal media ports private; limit command/source schemes and camera destinations. An encrypted credential file with a key beside it does not resist host root; choose a protected mounted secret or OS-backed key store with explicit unattended-restart behavior. Restrict accounts and isolate hostile decoders. MediaMTX anonymous defaults and OVMS/Triton exposure are concerns only if those optional components are selected; see #link("audit.md")[source audit].
+Bind go2rtc to the authenticated application boundary: its LAN defaults expose streams and potentially executable source types. Keep unauthenticated Frigate/internal media ports private; limit command/source schemes and camera destinations. An encrypted credential file with a key beside it does not resist host root; choose a protected mounted secret or OS-backed key store with explicit unattended-restart behavior. Restrict accounts and isolate hostile decoders. MediaMTX anonymous defaults and OVMS/Triton exposure are concerns only if those optional components are selected; the same release review applies if they are selected.
 
 Put cameras on a restricted VLAN with no Internet, use per-camera low-privilege accounts, cap hostile media inputs, pin decoder/container builds, deny traffic by default, and avoid inbound port forwarding. See #link("https://csrc.nist.gov/pubs/sp/800/82/r3/final")[NIST SP 800-82r3].
 
 = Open-source composition
 
-The local research includes cloned source, papers and manifests. The independent review rechecked the decision-driving interfaces, release pins and security paths; it did not execute the CCTV pipeline. Authoritative links, maintenance dates and limits are in the README and audit.
+The local research includes cloned source, papers and manifests. The independent review rechecked the decision-driving interfaces, release pins and security paths; it did not execute the CCTV pipeline. Authoritative links and limits appear in this report; build pins are maintained in `integrations/frigate/upstream.json`.
 
 #smalltable[
   #table(
@@ -271,7 +271,7 @@ Target cameras add compression, darkness, insects, weather, reflections, shake, 
     [#link("https://openaccess.thecvf.com/content/CVPR2026/html/Dai_No_Need_For_Real_Anomaly_MLLM_Empowered_Zero-Shot_Video_Anomaly_CVPR_2026_paper.html")[LAVIDA]], [MLLM semantics + pseudo anomalies + spatial learning], [Strong reported AUC/AP across five benchmarks, but no camera-day point. Repo had incomplete instructions and no trained LAVIDA checkpoint. Code ≠ usable weights.],
     [#link("https://openaccess.thecvf.com/content/CVPR2026W/AUTOPILOT/html/Picek_ACCIDENT_A_Benchmark_Dataset_for_Vehicle_Accident_Detection_from_Traffic_CVPRW_2026_paper.html")[ACCIDENT]], [2,027 real + 2,211 synthetic accident clips], [Five-way collision type: Qwen 0.115, Molmo 0.271 vs majority 0.335; DINOv2 0.440, cropped SigLIP2 0.471. Oracle accident-frame context; not accident/no-accident detection. VLM spatial localization beats simple priors.],
     [#link("https://openaccess.thecvf.com/content/CVPR2026W/VAND/papers/Khalili_STREAM-OOD_Regime-Aware_Sequential_Monitoring_for_Streaming_Out-of-Distribution_Detection_CVPRW_2026_paper.pdf")[STREAM-OOD]], [1,440 hours / 30 NYC intersections; streaming regime monitoring], [Reports 1.6 false alerts per normal hour, 1.7 on 10 unseen intersections. Private data, controlled shifts, no runnable artifact found; TTD frame/second ambiguity. Useful monitoring evidence, not a threat model.],
-    [#link("https://openaccess.thecvf.com/content/WACV2026/html/Qi_SmokeBench_Evaluating_Multimodal_Large_Language_Models_for_Wildfire_Smoke_Detection_WACV_2026_paper.html")[SmokeBench]], [MLLM wildfire smoke recognition/localization], [All tested models struggled on small/early smoke localization; apparent positive accuracy could coexist with bad negative behavior. Use a dedicated temporal model.],
+    [#link("https://openaccess.thecvf.com/content/WACV2026/html/Qi_SmokeBench_Evaluating_Multimodal_Large_Language_Models_for_Wildfire_Smoke_Detection_WACV_2026_paper.html")[SmokeBench]], [MLLM wildfire smoke recognition/localization], [All tested models struggled on small/early smoke localization; apparent positive accuracy could coexist with bad negative behavior. Dedicated temporal models and indoor transfer need separate tests.],
     [CADE / AnyAnomaly / ASK-HINT / VADER], [Continual learning; custom prompts; causal explanations], [Useful experiment lane. AnyAnomaly has no own checkpoint; ASK-HINT has no temporal model; VADER depends on upstream window selection.],
     [Three 2026 arXiv audits], [Cross-dataset and AUC failure analyses], [Convergent warning only: unreviewed. Title-only/unavailable ECCV entries were excluded.],
   )
@@ -295,7 +295,7 @@ Only technical/official material that establishes operation is included; deploym
     stroke: rule,
     fill: (x, y) => if y == 0 { navy } else if calc.rem(y, 2) == 0 { rgb("#F6F9FA") },
     table.header([#text(fill: white, weight: "bold")[Case]], [#text(fill: white, weight: "bold")[Established]], [#text(fill: white, weight: "bold")[Not established]]),
-    [#link("https://foi.tfl.gov.uk/FOI-3155-2324/Smart%20Station%20End%20of%20PoC%20Report_Redacted.pdf")[TfL, Willesden Green]], [One-station edge PoC, Oct 2022–Sep 2023, 11 use-case groups and ~44k triggers. It found falls/assistance and track access; >300 alerts caused extra yellow-line announcements. Humans decided; no face/audio.], [Litter was accurate but disabled because alert volume annoyed staff; bicycles/scooters caused false alerts; weapons were after-hours staged tests. The 1% operator-marked-invalid figure is not measured FPR.],
+    [#link("https://foi.tfl.gov.uk/FOI-3155-2324/Smart%20Station%20End%20of%20PoC%20Report_Redacted.pdf")[TfL, Willesden Green] / #link("https://foi.tfl.gov.uk/FOI-3156-2324/Smart%20Station%20End%20of%20PoC%20Presentation_Redacted.pdf")[results slides]], [One-station edge PoC, Oct 2022–Sep 2023; ~44k triggers, including ~19k real-time alerts and ~25k insights. Falls/assistance and track-access detections; >300 alerts led to extra yellow-line announcements. Humans decided.], [Litter alerts annoyed staff; bikes/scooters caused false alerts; weapons were staged. Voluntary 1% invalid marking is not measured FPR. No facial recognition/audio; phase two did unblur fare-evasion images.],
     [#link("https://alertcalifornia.org/technology/")[ALERTCalifornia + CAL FIRE]], [>1,200 PTZ cameras; candidate AI alerts available to all 21 CAL FIRE dispatch centers since Sep 2023. Trained watchstanders confirm them.], [Public successes are not a controlled sensitivity/false-alarm study. This proves a narrow, high-value human-loop design.],
     [#link("https://www.dhs.gov/sites/default/files/2023-01/22_0818_st_deepzero.pdf")[DHS/NYPD DeepZero test]], [Gun detector linked to existing CCTV/VMS; frames went to a 24/7 human verification center; interface was usable.], [Half-day mock block. Missed simultaneous guns, struggled on poorer cameras, excluded concealed/holstered guns; vendor gave no accuracy/FPR. Design evidence, not field efficacy.],
   )
@@ -350,7 +350,7 @@ Minimize viewing area, audio and retention before collection; no cross-camera id
 
 == Paper discovery and quality screen
 
-The inherited discovery log records CVF CVPR/WACV 2026 title scans, scholarly indexes, arXiv and citation chasing. This independent pass checked primary source and release code, reread decisive full papers, and searched surveillance/streaming work through 5 September 2026. It added STREAM-OOD and its supplement. Search completeness is bounded by accessible sources; unavailable papers and title-only matches support no technical conclusion. See the audit for access gaps and exact pins.
+The inherited discovery log records CVF CVPR/WACV 2026 title scans, scholarly indexes, arXiv and citation chasing. This independent pass checked primary source and release code, reread decisive full papers, and searched surveillance/streaming work through 5 September 2026. It added STREAM-OOD and its supplement. Search completeness is bounded by accessible sources; unavailable papers and title-only matches support no technical conclusion. Access gaps are recorded below; exact implementation pins are maintained in `integrations/frigate/upstream.json`.
 
 A paper entered the evidence base only when the full text was retrievable and it contributed an influential protocol/dataset, reproducible model, direct cross-domain/online evidence, or deployment-relevant failure analysis. Screening checked:
 
@@ -370,6 +370,8 @@ A paper entered the evidence base only when the full text was retrievable and it
 ]
 
 Industrial image anomalies, generic “smart city” papers, vendor cases without denominators, SEO pages, Medium and generated summaries were excluded. Search snippets were discovery hints only. Government reports establish operations but may lack counterfactuals; peer review establishes research scrutiny, not product reliability.
+
+A 1 September Scientific Reports candidate (#link("https://www.nature.com/articles/s41598-026-69349-x")[article]) could not be retrieved in full and supports no technical conclusion.
 
 Access gaps retained as gaps: the D-Fire device paper was paywalled, MUVIM needs email/waiver access, i-LIDS was withdrawn, and several gun/VAD checkpoints lack standalone commercial terms. None justifies creating an account yet.
 
@@ -393,5 +395,91 @@ This slice tests the foundation, CV and operator path together. It does not cert
 
 #v(4mm)
 #text(size: 7.5pt, fill: rgb("#607481"))[
-  Evidence catalog: authoritative links, review status and adoption decisions are maintained in the repository README. Bulk clones, papers, model checkpoints and rendered artifacts were intentionally excluded from version control.
+  Evidence catalog: authoritative links and adoption decisions are maintained in this report. Bulk clones, papers, model checkpoints and rendered artifacts were intentionally excluded from version control.
 ]
+
+
+= Source catalog
+
+Additional primary references inspected for the research above. Inclusion records a source, not a shipping dependency or deployment endorsement.
+
+- #link("https://github.com/openvinotoolkit/model_server")[OpenVINO Model Server]
+- #link("https://github.com/triton-inference-server/server")[NVIDIA Triton]
+- #link("https://github.com/onvif/specs")[ONVIF specifications]
+- #link("https://github.com/onvif/media-signing-framework")[ONVIF Media Signing Framework]
+- #link("https://github.com/blakeblackshear/frigate/releases/tag/v0.17.2")[Release]
+- #link("https://github.com/blakeblackshear/frigate/blob/v0.17.2/frigate/video.py")[pipeline]
+- #link("https://github.com/blakeblackshear/frigate/blob/v0.17.2/frigate/detectors/detection_api.py")[detector interface]
+- #link("https://github.com/blakeblackshear/frigate/blob/v0.17.2/frigate/track/norfair_tracker.py")[tracking]
+- #link("https://github.com/blakeblackshear/frigate/blob/v0.17.2/frigate/events/maintainer.py")[events]
+- #link("https://github.com/blakeblackshear/frigate/blob/v0.17.2/frigate/review/maintainer.py")[review]
+- #link("https://github.com/blakeblackshear/frigate/blob/v0.17.2/docker/main/Dockerfile")[Frigate Dockerfile]
+- #link("https://github.com/AlexxIT/go2rtc/blob/c245815e75e2a5fd60b4290f12bfc04e55a984d3/README.md#security")[go2rtc security/config]
+- #link("https://github.com/AlexxIT/go2rtc/blob/c245815e75e2a5fd60b4290f12bfc04e55a984d3/internal/rtsp/rtsp.go")[RTSP implementation]
+- #link("https://github.com/blakeblackshear/frigate/blob/v0.17.2/docker/main/install_deps.sh")[Exact build downloads]
+- #link("https://ffmpeg.org/security.html")[FFmpeg security]
+- #link("https://ffmpeg.org/legal.html")[license/build obligations]
+- #link("https://github.com/tryolabs/norfair/releases/tag/v2.3.0")[upstream release]
+- #link("https://github.com/blakeblackshear/frigate/blob/v0.17.2/frigate/detectors/detection_runners.py")[Runner]
+- #link("https://github.com/blakeblackshear/frigate/blob/v0.17.2/docker/main/build_ov_model.py")[model build]
+- #link("https://github.com/openvinotoolkit/openvino/blob/master/LICENSE")[OpenVINO license]
+- #link("https://github.com/open-mmlab/mmdetection/blob/cfd5d3a985b0249de009b67d04f37263e11cdf3d/mmdet/__init__.py")[Version bounds]
+- #link("https://github.com/open-mmlab/mmdetection/blob/cfd5d3a985b0249de009b67d04f37263e11cdf3d/mmdet/models/dense_heads/rtmdet_head.py")[head implementation]
+- #link("https://github.com/FoundationVision/ByteTrack/blob/d1bf0191adff59bc8fcfeaa0b33d3d1642552a99/yolox/tracker/byte_tracker.py")[Association implementation]
+- #link("https://github.com/FoundationVision/ByteTrack/blob/d1bf0191adff59bc8fcfeaa0b33d3d1642552a99/requirements.txt")[old requirements]
+- #link("https://github.com/bluenviron/mediamtx/blob/1c738928b5e736775eac0f1f3117f49683e2224c/mediamtx.yml")[Auth/defaults]
+- #link("https://github.com/bluenviron/mediamtx/blob/1c738928b5e736775eac0f1f3117f49683e2224c/internal/recorder/recorder.go")[recorder]
+- #link("https://github.com/bluenviron/mediamtx/blob/1c738928b5e736775eac0f1f3117f49683e2224c/internal/playback/server.go")[playback]
+- #link("https://github.com/open-edge-platform/dlstreamer/releases/tag/v2026.2.0")[2026.2 release]
+- #link("https://github.com/open-edge-platform/dlstreamer/blob/2bd9f9baf846b1de0102e3fdc3ab94f8fbf26110/docs/user-guide/system_requirements.md")[platform matrix]
+- #link("https://github.com/open-edge-platform/dlstreamer/blob/2bd9f9baf846b1de0102e3fdc3ab94f8fbf26110/docs/user-guide/elements/gvaanalytics.md")[rule element]
+- #link("https://github.com/open-edge-platform/dlstreamer/blob/2bd9f9baf846b1de0102e3fdc3ab94f8fbf26110/python/dlstreamer/onvif/discovery/ws_discovery.py")[discovery]
+- #link("https://github.com/roflcoopter/viseron/blob/61e4fd2551b8ce43a4d3a7adc01d904dde42d471/viseron/components/ffmpeg/frame_reader.py")[FFmpeg frame reader]
+- #link("https://github.com/roflcoopter/viseron/blob/61e4fd2551b8ce43a4d3a7adc01d904dde42d471/viseron/components/ffmpeg/recorder.py")[recorder]
+- #link("https://github.com/roflcoopter/viseron/blob/61e4fd2551b8ce43a4d3a7adc01d904dde42d471/viseron/components/webserver/request_handler.py")[web request boundary]
+- #link("https://github.com/openvinotoolkit/model_server/blob/95628b45a082bd3d9562a3ad2f3d0762d5883ca4/docs/security_considerations.md")[OVMS security]
+- #link("https://github.com/triton-inference-server/server/blob/81c677dbff97e7187e104cd473d2f17ae5b9eb69/docs/customization_guide/deploy.md")[Triton deployment]
+- #link("https://github.com/ZoneMinder/zmeventnotificationNg")[zmeventnotificationNg]
+- #link("https://github.com/ZoneMinder/pyzmNg")[pyzmNg]
+- #link("https://github.com/roflcoopter/viseron")[Viseron]
+- #link("https://github.com/tryolabs/norfair")[Norfair]
+- #link("https://github.com/roboflow/supervision")[Supervision]
+- #link("https://github.com/use-go/onvif")[use-go/onvif]
+- #link("https://github.com/pliablepixels/zmeventserver")[ZoneMinder legacy event server]
+- #link("https://github.com/open-mmlab/mmdetection")[MMDetection]
+- #link("https://github.com/FoundationVision/ByteTrack")[ByteTrack]
+- #link("https://github.com/open-mmlab/mmpose")[MMPose]
+- #link("https://github.com/open-mmlab/mmaction2")[MMAction2]
+- #link("https://github.com/facebookresearch/pytorchvideo")[PyTorchVideo]
+- #link("https://github.com/IDEA-Research/GroundingDINO")[GroundingDINO]
+- #link("https://github.com/nwpu-zxr/VadCLIP")[VadCLIP]
+- #link("https://github.com/VitaminCreed/LAVIDA")[LAVIDA]
+- #link("https://github.com/SkiddieAhn/Paper-AnyAnomaly")[AnyAnomaly]
+- #link("https://github.com/srikarym/CCTV-Gun")[CCTV-Gun]
+- #link("https://github.com/gaia-solutions-on-demand/DFireDataset")[D-Fire]
+- #link("https://github.com/pedbrgs/Fire-Detection")[Fire-Detection]
+- #link("https://openaccess.thecvf.com/content_cvpr_2018/html/Sultani_Real-World_Anomaly_Detection_CVPR_2018_paper.html")[Real-world Anomaly Detection in Surveillance Videos]
+- #link("https://openaccess.thecvf.com/content_WACV_2020/html/Ramachandra_Street_Scene_A_new_dataset_and_evaluation_protocol_for_video_WACV_2020_paper.html")[Street Scene]
+- #link("https://openaccess.thecvf.com/content/ICCV2021/html/Tian_Weakly-Supervised_Video_Anomaly_Detection_With_Robust_Temporal_Feature_Magnitude_Learning_ICCV_2021_paper.html")[RTFM]
+- #link("https://arxiv.org/abs/2110.06864")[ByteTrack]
+- #link("https://arxiv.org/abs/2212.07784")[RTMDet]
+- #link("https://openaccess.thecvf.com/content/CVPR2023/html/Cao_A_New_Comprehensive_Benchmark_for_Semi-Supervised_Video_Anomaly_Detection_and_CVPR_2023_paper.html")[NWPU Campus benchmark]
+- #link("https://openaccess.thecvf.com/content/WACV2023/html/Aich_Cross-Domain_Video_Anomaly_Detection_Without_Target_Domain_Adaptation_WACV_2023_paper.html")[Cross-Domain VAD]
+- #link("https://openaccess.thecvf.com/content/WACV2024/html/Karim_Real-Time_Weakly_Supervised_Video_Anomaly_Detection_WACV_2024_paper.html")[Real-Time Weakly Supervised VAD]
+- #link("https://ojs.aaai.org/index.php/AAAI/article/view/28518")[VadCLIP]
+- #link("https://www.ecva.net/papers/eccv_2024/papers_ECCV/html/694_ECCV_2024_paper.php")[Grounding DINO]
+- #link("https://openaccess.thecvf.com/content/CVPR2024/html/Xiao_Florence-2_Advancing_a_Unified_Representation_for_a_Variety_of_Vision_CVPR_2024_paper.html")[Florence-2]
+- #link("https://arxiv.org/abs/1911.05913")[RWF-2000]
+- #link("https://www.mdpi.com/1424-8220/18/12/4290")[Abandoned-object survey]
+- #link("https://openaccess.thecvf.com/content/CVPR2026W/VAND/supplemental/Khalili_STREAM-OOD_Regime-Aware_Sequential_CVPRW_2026_supplemental.pdf")[supplement]
+- #link("https://openaccess.thecvf.com/content/WACV2026/html/Hashimoto_CADE_Continual_Weakly-supervised_Video_Anomaly_Detection_with_Ensembles_WACV_2026_paper.html")[CADE]
+- #link("https://openaccess.thecvf.com/content/WACV2026/html/Ahn_AnyAnomaly_Zero-Shot_Customizable_Video_Anomaly_Detection_with_LVLM_WACV_2026_paper.html")[AnyAnomaly]
+- #link("https://openaccess.thecvf.com/content/WACV2026/html/Zou_Unlocking_Vision-Language_Models_for_Video_Anomaly_Detection_via_Fine-Grained_Prompting_WACV_2026_paper.html")[ASK-HINT]
+- #link("https://openaccess.thecvf.com/content/WACV2026/html/Cheng_VADER_Towards_Causal_Video_Anomaly_Understanding_with_Relation-Aware_Large_Language_WACV_2026_paper.html")[VADER]
+- #link("https://openaccess.thecvf.com/content/CVPR2026W/VAND/html/Sasaki_From_Surveillance_to_Mobile_Robots_Regime-Aware_Video_Anomaly_Detection_CVPRW_2026_paper.html")[Regime-Aware VAD]
+- #link("https://openaccess.thecvf.com/content/CVPR2026/html/Zhang_Fine-VAD_Towards_Fine-Grained_Video_Anomaly_Detection_via_Progressive_Cross-Granularity_Learning_CVPR_2026_paper.html")[Fine-VAD]
+- #link("https://openaccess.thecvf.com/content/CVPR2026/html/Zhu_Alert-CLIP_Abnormality-aware_Latent-Enhanced_Representation_Tuning_of_CLIP_for_Video_Anomaly_Detection_CVPR_2026_paper.html")[Alert-CLIP]
+- #link("https://arxiv.org/abs/2606.29506")[Benchmark AUC Is Not Deployable Reliability]
+- #link("https://arxiv.org/abs/2608.11985")[Auditing Frame-Level AUC]
+- #link("https://arxiv.org/abs/2608.21854")[Frame-Level Evaluation Mostly Measures Video-Level Ranking]
+- #link("https://eur-lex.europa.eu/legal-content/EN/TXT/?uri=celex:32024R1689")[EU AI Act]

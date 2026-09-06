@@ -1,0 +1,1419 @@
+diff --git a/docker/main/rootfs/usr/local/go2rtc/create_config.py b/docker/main/rootfs/usr/local/go2rtc/create_config.py
+index dfd8b72..8a0d57a 100644
+--- a/docker/main/rootfs/usr/local/go2rtc/create_config.py
++++ b/docker/main/rootfs/usr/local/go2rtc/create_config.py
+@@ -189,5 +189,6 @@ if config.get("birdseye", {}).get("restream", False):
+         go2rtc_config["streams"] = {"birdseye": ffmpeg_cmd}
+ 
+ # Write go2rtc_config to /dev/shm/go2rtc.yaml
+-with open("/dev/shm/go2rtc.yaml", "w") as f:
++fd = os.open("/dev/shm/go2rtc.yaml", os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
++with os.fdopen(fd, "w") as f:
+     yaml.dump(go2rtc_config, f)
+diff --git a/docker/main/rootfs/usr/local/nginx/conf/nginx.conf b/docker/main/rootfs/usr/local/nginx/conf/nginx.conf
+index f6b0928..d186e1d 100644
+--- a/docker/main/rootfs/usr/local/nginx/conf/nginx.conf
++++ b/docker/main/rootfs/usr/local/nginx/conf/nginx.conf
+@@ -150,9 +150,9 @@ http {
+                 image/jpeg jpg;
+             }
+ 
+-            expires 7d;
+-            add_header Cache-Control "public";
+-            autoindex on;
++            expires off;
++            add_header Cache-Control "private, no-store";
++            autoindex off;
+             root /media/frigate;
+         }
+ 
+@@ -167,7 +167,7 @@ http {
+                 video/mp4 mp4;
+             }
+ 
+-            autoindex on;
++            autoindex off;
+             autoindex_format json;
+             root /media/frigate;
+         }
+@@ -178,7 +178,7 @@ http {
+                 video/mp4 mp4;
+             }
+ 
+-            autoindex on;
++            autoindex off;
+             autoindex_format json;
+             root /media/frigate;
+         }
+@@ -318,24 +318,24 @@ http {
+             location /assets/ {
+                 access_log off;
+                 expires 1y;
+-                add_header Cache-Control "public";
++                add_header Cache-Control "private, no-store";
+             }
+ 
+             location /fonts/ {
+                 access_log off;
+                 expires 1y;
+-                add_header Cache-Control "public";
++                add_header Cache-Control "private, no-store";
+             }
+ 
+             location /locales/ {
+                 access_log off;
+-                add_header Cache-Control "public";
++                add_header Cache-Control "private, no-store";
+             }
+ 
+             location ~ ^/.*-([A-Za-z0-9]+)\.webmanifest$ {
+                 access_log off;
+                 expires 1y;
+-                add_header Cache-Control "public";
++                add_header Cache-Control "private, no-store";
+                 default_type application/json;
+                 proxy_set_header Accept-Encoding "";
+                 sub_filter_once off;
+diff --git a/frigate/api/app.py b/frigate/api/app.py
+index d954a74..78c476e 100644
+--- a/frigate/api/app.py
++++ b/frigate/api/app.py
+@@ -5,7 +5,6 @@ import copy
+ import json
+ import logging
+ import os
+-import traceback
+ import urllib
+ from datetime import datetime, timedelta
+ from functools import reduce
+@@ -19,7 +18,6 @@ from fastapi import APIRouter, Body, Path, Request, Response
+ from fastapi.encoders import jsonable_encoder
+ from fastapi.params import Depends
+ from fastapi.responses import JSONResponse, PlainTextResponse, StreamingResponse
+-from markupsafe import escape
+ from peewee import SQL, fn, operator
+ from pydantic import ValidationError
+ 
+@@ -43,9 +41,9 @@ from frigate.util.builtin import (
+     clean_camera_user_pass,
+     flatten_config_data,
+     process_config_query_string,
+-    update_yaml_file_bulk,
+ )
+ from frigate.util.config import find_config_file
++from frigate.util.netwatch_config import commit_config, redact_config
+ from frigate.util.services import (
+     get_nvidia_driver_info,
+     process_logs,
+@@ -185,37 +183,19 @@ def config(request: Request):
+             request.app.frigate_config.model.merged_labelmap
+         )
+ 
+-    return JSONResponse(content=config)
++    return JSONResponse(content=redact_config(config))
+ 
+ 
+ @router.get("/config/raw_paths", dependencies=[Depends(require_role(["admin"]))])
+ def config_raw_paths(request: Request):
+     """Admin-only endpoint that returns camera paths and go2rtc streams without credential masking."""
+-    config_obj: FrigateConfig = request.app.frigate_config
+-
+-    raw_paths = {"cameras": {}, "go2rtc": {"streams": {}}}
+-
+-    # Extract raw camera ffmpeg input paths
+-    for camera_name, camera in config_obj.cameras.items():
+-        raw_paths["cameras"][camera_name] = {
+-            "ffmpeg": {
+-                "inputs": [
+-                    {"path": input.path, "roles": input.roles}
+-                    for input in camera.ffmpeg.inputs
+-                ]
+-            }
+-        }
+-
+-    # Extract raw go2rtc stream URLs
+-    go2rtc_config = config_obj.go2rtc.model_dump(
+-        mode="json", warnings="none", exclude_none=True
++    # Edit the latest saved state, including changes awaiting restart.
++    with open(find_config_file()) as source:
++        saved = ruamel.yaml.YAML(typ="safe").load(source)
++    return JSONResponse(
++        content={"cameras": saved.get("cameras", {}), "go2rtc": saved.get("go2rtc", {})},
++        headers={"Cache-Control": "no-store"},
+     )
+-    for stream_name, stream in go2rtc_config.get("streams", {}).items():
+-        if stream is None:
+-            continue
+-        raw_paths["go2rtc"]["streams"][stream_name] = stream
+-
+-    return JSONResponse(content=raw_paths)
+ 
+ 
+ @router.get("/config/raw", dependencies=[Depends(require_role(["admin"]))])
+@@ -288,7 +268,7 @@ def config_save(save_option: str, body: Any = Body(media_type="text/plain")):
+                 line_number = "Unable to determine"
+ 
+             error_message.append(
+-                f"Line {line_number}: {' -> '.join(map(str, error_path))} - {error.get('msg', error.get('type', 'Unknown'))}"
++                f"Line {line_number}: {' -> '.join(map(str, error_path))} - {error.get('type', 'Invalid value')}"
+             )
+ 
+         return JSONResponse(
+@@ -307,7 +287,7 @@ def config_save(save_option: str, body: Any = Body(media_type="text/plain")):
+             content=(
+                 {
+                     "success": False,
+-                    "message": f"\nYour configuration is invalid.\nSee the official documentation at docs.frigate.video.\n\n{escape(str(traceback.format_exc()))}",
++                    "message": "Invalid configuration. Check field names and values; submitted secrets are omitted.",
+                 }
+             ),
+             status_code=400,
+@@ -317,9 +297,7 @@ def config_save(save_option: str, body: Any = Body(media_type="text/plain")):
+     try:
+         config_file = find_config_file()
+ 
+-        with open(config_file, "w") as f:
+-            f.write(new_config)
+-            f.close()
++        commit_config(config_file, FrigateConfig.parse_yaml, text=new_config)
+     except Exception:
+         return JSONResponse(
+             content=(
+@@ -366,61 +344,34 @@ def config_save(save_option: str, body: Any = Body(media_type="text/plain")):
+ def config_set(request: Request, body: AppConfigSetBody):
+     config_file = find_config_file()
+ 
+-    with open(config_file, "r") as f:
+-        old_raw_config = f.read()
+-
+     try:
+         updates = {}
+-
+-        # process query string parameters (takes precedence over body.config_data)
+         parsed_url = urllib.parse.urlparse(str(request.url))
+         query_string = urllib.parse.parse_qs(parsed_url.query, keep_blank_values=True)
+-
+-        # Filter out empty keys but keep blank values for non-empty keys
+-        query_string = {k: v for k, v in query_string.items() if k}
+-
++        # Existing settings use non-secret query updates. Camera onboarding uses JSON.
+         if query_string:
++            def private_query(key):
++                parts = key.split(".")
++                if parts[0] == "cameras":
++                    # Preserve native mask/zone/review tuning; connection settings use JSON.
++                    return len(parts) < 3 or parts[2] not in {
++                        "motion", "zones", "review", "objects", "detect", "notifications"
++                    }
++                return parts[0] in {
++                    "go2rtc", "onvif", "mqtt", "env_vars", "environment_vars", "proxy", "auth"
++                }
++
++            if any(private_query(key) for key in query_string):
++                return JSONResponse({"success": False, "message": "Use a JSON body for private configuration"}, status_code=400)
+             updates = process_config_query_string(query_string)
+         elif body.config_data:
+             updates = flatten_config_data(body.config_data)
+-
+         if not updates:
+-            return JSONResponse(
+-                content=(
+-                    {"success": False, "message": "No configuration data provided"}
+-                ),
+-                status_code=400,
+-            )
+-
+-        # apply all updates in a single operation
+-        update_yaml_file_bulk(config_file, updates)
+-
+-        # validate the updated config
+-        with open(config_file, "r") as f:
+-            new_raw_config = f.read()
+-
+-        try:
+-            config = FrigateConfig.parse(new_raw_config)
+-        except Exception:
+-            with open(config_file, "w") as f:
+-                f.write(old_raw_config)
+-                f.close()
+-            logger.error(f"\nConfig Error:\n\n{str(traceback.format_exc())}")
+-            return JSONResponse(
+-                content=(
+-                    {
+-                        "success": False,
+-                        "message": "Error parsing config. Check logs for error message.",
+-                    }
+-                ),
+-                status_code=400,
+-            )
+-    except Exception as e:
+-        logging.error(f"Error updating config: {e}")
+-        return JSONResponse(
+-            content=({"success": False, "message": "Error updating config"}),
+-            status_code=500,
+-        )
++            return JSONResponse({"success": False, "message": "No configuration data provided"}, status_code=400)
++        config = commit_config(config_file, FrigateConfig.parse, updates=updates)
++    except Exception:
++        logger.warning("Configuration update rejected; previous configuration preserved")
++        return JSONResponse({"success": False, "message": "Invalid configuration; previous configuration preserved"}, status_code=400)
+ 
+     if body.requires_restart == 0 or body.update_topic:
+         old_config: FrigateConfig = request.app.frigate_config
+@@ -489,7 +440,7 @@ def nvinfo():
+ @router.get(
+     "/logs/{service}",
+     tags=[Tags.logs],
+-    dependencies=[Depends(allow_any_authenticated())],
++    dependencies=[Depends(require_role(["admin"]))],
+ )
+ async def logs(
+     service: str = Path(enum=["frigate", "nginx", "go2rtc"]),
+diff --git a/frigate/api/auth.py b/frigate/api/auth.py
+index 79cd21a..5b843b4 100644
+--- a/frigate/api/auth.py
++++ b/frigate/api/auth.py
+@@ -6,12 +6,14 @@ import ipaddress
+ import json
+ import logging
+ import os
++import posixpath
+ import re
+ import secrets
+ import time
+ from datetime import datetime
+ from pathlib import Path
+ from typing import List, Optional
++from urllib.parse import unquote, urlsplit
+ 
+ from fastapi import APIRouter, Depends, HTTPException, Request, Response
+ from fastapi.responses import JSONResponse, RedirectResponse
+@@ -697,6 +699,10 @@ def auth(request: Request):
+                 JWT_COOKIE_SECURE,
+             )
+ 
++        original_path = posixpath.normpath("/" + unquote(urlsplit(request.headers.get("x-original-url", "")).path).lstrip("/"))
++        if role != "admin" and original_path.startswith(("/clips/", "/recordings/", "/exports/")):
++            return Response("", status_code=403)
++
+         success_response.headers["remote-user"] = user
+         success_response.headers["remote-role"] = role
+         return success_response
+diff --git a/frigate/api/camera.py b/frigate/api/camera.py
+index 1dae5ae..66856e9 100644
+--- a/frigate/api/camera.py
++++ b/frigate/api/camera.py
+@@ -9,7 +9,7 @@ from urllib.parse import quote_plus
+ 
+ import httpx
+ import requests
+-from fastapi import APIRouter, Depends, Query, Request, Response
++from fastapi import APIRouter, Body, Depends, Request, Response
+ from fastapi.responses import JSONResponse
+ from onvif import ONVIFCamera, ONVIFError
+ from zeep.exceptions import Fault, TransportError
+@@ -109,7 +109,7 @@ def go2rtc_camera_stream(request: Request, stream_name: str):
+ @router.put(
+     "/go2rtc/streams/{stream_name}", dependencies=[Depends(require_role(["admin"]))]
+ )
+-def go2rtc_add_stream(request: Request, stream_name: str, src: str = ""):
++def go2rtc_add_stream(request: Request, stream_name: str, src: str = Body(default="", embed=True)):
+     """Add or update a go2rtc stream configuration."""
+     if src and is_restricted_go2rtc_source(src):
+         logger.warning(
+@@ -135,18 +135,18 @@ def go2rtc_add_stream(request: Request, stream_name: str, src: str = ""):
+             timeout=10,
+         )
+         if not r.ok:
+-            logger.error(f"Failed to add go2rtc stream {stream_name}: {r.text}")
++            logger.error("Failed to add go2rtc stream")
+             return JSONResponse(
+                 content=(
+-                    {"success": False, "message": f"Failed to add stream: {r.text}"}
++                    {"success": False, "message": "Failed to add stream"}
+                 ),
+                 status_code=r.status_code,
+             )
+         return JSONResponse(
+             content={"success": True, "message": "Stream added successfully"}
+         )
+-    except requests.RequestException as e:
+-        logger.error(f"Error communicating with go2rtc: {e}")
++    except requests.RequestException:
++        logger.error("Error communicating with go2rtc")
+         return JSONResponse(
+             content=(
+                 {
+@@ -180,8 +180,8 @@ def go2rtc_delete_stream(stream_name: str):
+         return JSONResponse(
+             content={"success": True, "message": "Stream deleted successfully"}
+         )
+-    except requests.RequestException as e:
+-        logger.error(f"Error communicating with go2rtc: {e}")
++    except requests.RequestException:
++        logger.error("Error communicating with go2rtc")
+         return JSONResponse(
+             content=(
+                 {
+@@ -193,8 +193,12 @@ def go2rtc_delete_stream(stream_name: str):
+         )
+ 
+ 
+-@router.get("/ffprobe", dependencies=[Depends(require_role(["admin"]))])
+-def ffprobe(request: Request, paths: str = "", detailed: bool = False):
++@router.post("/ffprobe", dependencies=[Depends(require_role(["admin"]))])
++def ffprobe(
++    request: Request,
++    paths: str = Body(default=""),
++    detailed: bool = Body(default=False),
++):
+     path_param = paths
+ 
+     if not path_param:
+@@ -238,21 +242,9 @@ def ffprobe(request: Request, paths: str = "", detailed: bool = False):
+         )
+ 
+         if ffprobe.returncode != 0:
+-            try:
+-                stderr_decoded = ffprobe.stderr.decode("utf-8")
+-            except UnicodeDecodeError:
+-                try:
+-                    stderr_decoded = ffprobe.stderr.decode("unicode_escape")
+-                except Exception:
+-                    stderr_decoded = str(ffprobe.stderr)
+-
+-            stderr_lines = [
+-                line.strip() for line in stderr_decoded.split("\n") if line.strip()
+-            ]
+-
+             result = {
+                 "return_code": ffprobe.returncode,
+-                "stderr": stderr_lines,
++                "stderr": ["Unable to probe stream; check the address, credentials and connectivity"],
+                 "stdout": "",
+             }
+         else:
+@@ -325,8 +317,12 @@ def ffprobe(request: Request, paths: str = "", detailed: bool = False):
+     return JSONResponse(content=output)
+ 
+ 
+-@router.get("/ffprobe/snapshot", dependencies=[Depends(require_role(["admin"]))])
+-def ffprobe_snapshot(request: Request, url: str = "", timeout: int = 10):
++@router.post("/ffprobe/snapshot", dependencies=[Depends(require_role(["admin"]))])
++def ffprobe_snapshot(
++    request: Request,
++    url: str = Body(default=""),
++    timeout: int = Body(default=10, ge=1, le=15),
++):
+     """Get a snapshot from a stream URL using ffmpeg."""
+     if not url:
+         return JSONResponse(
+@@ -352,15 +348,15 @@ def ffprobe_snapshot(request: Request, url: str = "", timeout: int = 10):
+             status_code=408,
+         )
+     else:
+-        logger.error(f"ffmpeg failed: {error}")
++        logger.error("FFmpeg snapshot failed")
+         return JSONResponse(
+             content={"success": False, "message": "Failed to capture snapshot"},
+             status_code=500,
+         )
+ 
+ 
+-@router.get("/reolink/detect", dependencies=[Depends(require_role(["admin"]))])
+-def reolink_detect(host: str = "", username: str = "", password: str = ""):
++@router.post("/reolink/detect", dependencies=[Depends(require_role(["admin"]))])
++def reolink_detect(host: str = Body(""), username: str = Body(""), password: str = Body("")):
+     """
+     Detect Reolink camera capabilities and recommend optimal protocol.
+ 
+@@ -492,7 +488,7 @@ def _extract_fps(r_frame_rate: str) -> float | None:
+         return None
+ 
+ 
+-@router.get(
++@router.post(
+     "/onvif/probe",
+     dependencies=[Depends(require_role(["admin"]))],
+     summary="Probe ONVIF device",
+@@ -504,12 +500,12 @@ def _extract_fps(r_frame_rate: str) -> float | None:
+ )
+ async def onvif_probe(
+     request: Request,
+-    host: str = Query(None),
+-    port: int = Query(80),
+-    username: str = Query(""),
+-    password: str = Query(""),
+-    test: bool = Query(False),
+-    auth_type: str = Query("basic"),  # Add auth_type parameter
++    host: str = Body(None),
++    port: int = Body(80),
++    username: str = Body(""),
++    password: str = Body(""),
++    test: bool = Body(False),
++    auth_type: str = Body("basic"),  # Add auth_type parameter
+ ):
+     """
+     Probe a single ONVIF device to determine capabilities.
+diff --git a/frigate/api/event.py b/frigate/api/event.py
+index c03cfb4..2ec3f44 100644
+--- a/frigate/api/event.py
++++ b/frigate/api/event.py
+@@ -230,7 +230,7 @@ def events(
+         for plate in filtered_recognized_license_plates:
+             if plate.startswith("^") or any(ch in plate for ch in ".[]?+*"):
+                 clauses_for_plates.append(
+-                    Event.data["recognized_license_plate"].cast("text").regexp(plate)
++                    (Event.data["recognized_license_plate"].cast("text") == plate)
+                 )
+             else:
+                 normal_plates.append(plate)
+@@ -652,7 +652,7 @@ def events_search(
+         for plate in filtered_recognized_license_plates:
+             if plate.startswith("^") or any(ch in plate for ch in ".[]?+*"):
+                 clauses_for_plates.append(
+-                    Event.data["recognized_license_plate"].cast("text").regexp(plate)
++                    (Event.data["recognized_license_plate"].cast("text") == plate)
+                 )
+             else:
+                 normal_plates.append(plate)
+diff --git a/frigate/api/fastapi_app.py b/frigate/api/fastapi_app.py
+index 48c97df..dc9b410 100644
+--- a/frigate/api/fastapi_app.py
++++ b/frigate/api/fastapi_app.py
+@@ -3,6 +3,7 @@ import re
+ from typing import Optional
+ 
+ from fastapi import Depends, FastAPI, Request
++from fastapi.exceptions import RequestValidationError
+ from fastapi.responses import JSONResponse
+ from joserfc.jwk import OctKey
+ from playhouse.sqliteq import SqliteQueueDatabase
+@@ -73,6 +74,10 @@ def create_fastapi_app(
+         else [],
+     )
+ 
++    @app.exception_handler(RequestValidationError)
++    async def private_validation_error(request, exc):
++        return JSONResponse({"detail": "Invalid request fields; submitted values omitted"}, status_code=422)
++
+     # update the request_address with the x-forwarded-for header from nginx
+     # https://starlette-context.readthedocs.io/en/latest/plugins.html#forwarded-for
+     app.add_middleware(
+diff --git a/frigate/app.py b/frigate/app.py
+index fac7a08..66b6f8b 100644
+--- a/frigate/app.py
++++ b/frigate/app.py
+@@ -499,7 +499,10 @@ class FrigateApp:
+                 logger.info("***    Auth is enabled, but no users exist.          ***")
+                 logger.info("***    Created a default user:                       ***")
+                 logger.info("***    User: admin                                   ***")
+-                logger.info(f"***    Password: {password}   ***")
++                fd = os.open("/config/bootstrap-password", os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
++                with os.fdopen(fd, "w") as secret_file:
++                    secret_file.write(password + "\n")
++                logger.info("Initial admin password saved to /config/bootstrap-password")
+                 logger.info("********************************************************")
+                 logger.info("********************************************************")
+             elif self.config.auth.reset_admin_password:
+@@ -517,7 +520,10 @@ class FrigateApp:
+                 logger.info("********************************************************")
+                 logger.info("********************************************************")
+                 logger.info("***    Reset admin password set in the config.       ***")
+-                logger.info(f"***    Password: {password}   ***")
++                fd = os.open("/config/bootstrap-password", os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
++                with os.fdopen(fd, "w") as secret_file:
++                    secret_file.write(password + "\n")
++                logger.info("Initial admin password saved to /config/bootstrap-password")
+                 logger.info("********************************************************")
+                 logger.info("********************************************************")
+ 
+diff --git a/frigate/util/builtin.py b/frigate/util/builtin.py
+index 867d253..5d6cc60 100644
+--- a/frigate/util/builtin.py
++++ b/frigate/util/builtin.py
+@@ -107,7 +107,8 @@ def deep_merge(dct1: dict, dct2: dict, override=False, merge_lists=False) -> dic
+ def clean_camera_user_pass(line: str) -> str:
+     """Removes user and password from line."""
+     rtsp_cleaned = re.sub(REGEX_RTSP_CAMERA_USER_PASS, "://*:*@", line)
+-    return re.sub(REGEX_HTTP_CAMERA_USER_PASS, "user=*&password=*", rtsp_cleaned)
++    cleaned = re.sub(REGEX_HTTP_CAMERA_USER_PASS, "user=*&password=*", rtsp_cleaned)
++    return re.sub(r"(?i)([?&](?:password|passwd|pwd|user|username|token|access_token|api_key|key)=)[^&#\s\"']*", r"\1*", cleaned)
+ 
+ 
+ def escape_special_characters(path: str) -> str:
+diff --git a/web/package.json b/web/package.json
+index 46d6670..f7c9e82 100644
+--- a/web/package.json
++++ b/web/package.json
+@@ -1,5 +1,5 @@
+ {
+-  "name": "web-new",
++  "name": "netwatch-frigate-web",
+   "private": true,
+   "version": "0.0.0",
+   "type": "module",
+@@ -56,6 +56,7 @@
+     "konva": "^9.3.18",
+     "lodash": "^4.17.23",
+     "lucide-react": "^0.477.0",
++    "monaco-editor": "0.44.0",
+     "monaco-yaml": "^5.3.1",
+     "next-themes": "^0.3.0",
+     "nosleep.js": "^0.12.0",
+@@ -65,11 +66,12 @@
+     "react-device-detect": "^2.2.3",
+     "react-dom": "^18.3.1",
+     "react-dropzone": "^14.3.8",
+-    "react-grid-layout": "^1.5.0",
++    "react-grid-layout": "^1.5.4",
+     "react-hook-form": "^7.52.1",
+     "react-i18next": "^15.2.0",
+     "react-icons": "^5.5.0",
+     "react-konva": "^18.2.10",
++    "react-resizable": "3.0.5",
+     "react-router-dom": "^6.30.3",
+     "react-swipeable": "^7.0.2",
+     "react-tracked": "^2.0.1",
+@@ -124,5 +126,6 @@
+     "typescript": "^5.8.2",
+     "vite": "^6.4.1",
+     "vitest": "^3.0.7"
+-  }
++  },
++  "packageManager": "pnpm@11.3.0"
+ }
+diff --git a/web/src/components/overlay/CameraInfoDialog.tsx b/web/src/components/overlay/CameraInfoDialog.tsx
+index a15d9c5..39d445f 100644
+--- a/web/src/components/overlay/CameraInfoDialog.tsx
++++ b/web/src/components/overlay/CameraInfoDialog.tsx
+@@ -33,10 +33,8 @@ export default function CameraInfoDialog({
+ 
+   useEffect(() => {
+     axios
+-      .get("ffprobe", {
+-        params: {
+-          paths: `camera:${camera.name}`,
+-        },
++      .post("ffprobe", {
++        paths: `camera:${camera.name}`,
+       })
+       .then((res) => {
+         if (res.status === 200) {
+diff --git a/web/src/components/settings/CameraEditForm.tsx b/web/src/components/settings/CameraEditForm.tsx
+index 50db138..ff2dd15 100644
+--- a/web/src/components/settings/CameraEditForm.tsx
++++ b/web/src/components/settings/CameraEditForm.tsx
+@@ -45,10 +45,24 @@ export default function CameraEditForm({
+   const { t } = useTranslation(["views/settings"]);
+   const { data: config, mutate: mutateConfig } =
+     useSWR<FrigateConfig>("config");
+-  const { data: rawPaths, mutate: mutateRawPaths } = useSWR<{
++  const {
++    data: rawPaths,
++    error: rawPathsError,
++    mutate: mutateRawPaths,
++  } = useSWR<{
+     cameras: Record<
+       string,
+-      { ffmpeg: { inputs: { path: string; roles: string[] }[] } }
++      {
++        friendly_name?: string;
++        enabled?: boolean;
++        live?: { streams?: Record<string, string> };
++        ffmpeg: {
++          inputs: ({ path: string; roles: string[] } & Record<
++            string,
++            unknown
++          >)[];
++        };
++      }
+     >;
+     go2rtc: { streams: Record<string, string | string[]> };
+   }>(cameraName ? "config/raw_paths" : null);
+@@ -64,18 +78,20 @@ export default function CameraEditForm({
+         ffmpeg: z.object({
+           inputs: z
+             .array(
+-              z.object({
+-                path: z.string().min(1, {
+-                  message: t(
+-                    "cameraManagement.cameraConfig.ffmpeg.pathRequired",
+-                  ),
+-                }),
+-                roles: z.array(RoleEnum).min(1, {
+-                  message: t(
+-                    "cameraManagement.cameraConfig.ffmpeg.rolesRequired",
+-                  ),
+-                }),
+-              }),
++              z
++                .object({
++                  path: z.string().min(1, {
++                    message: t(
++                      "cameraManagement.cameraConfig.ffmpeg.pathRequired",
++                    ),
++                  }),
++                  roles: z.array(RoleEnum).min(1, {
++                    message: t(
++                      "cameraManagement.cameraConfig.ffmpeg.rolesRequired",
++                    ),
++                  }),
++                })
++                .passthrough(),
+             )
+             .min(1, {
+               message: t("cameraManagement.cameraConfig.ffmpeg.inputsRequired"),
+@@ -159,11 +175,13 @@ export default function CameraEditForm({
+     const rawCameraData = rawPaths?.cameras?.[cameraName];
+     defaultValues.ffmpeg.inputs = rawCameraData?.ffmpeg?.inputs?.length
+       ? rawCameraData.ffmpeg.inputs.map((input) => ({
++          ...input,
+           path: input.path,
+           roles: input.roles as Role[],
+         }))
+       : camera.ffmpeg?.inputs?.length
+         ? camera.ffmpeg.inputs.map((input) => ({
++            ...input,
+             path: input.path,
+             roles: input.roles as Role[],
+           }))
+@@ -191,10 +209,10 @@ export default function CameraEditForm({
+     });
+ 
+     // Include live --> streams keys
+-    const liveStreams = camera?.live?.streams;
++    const liveStreams = rawCameraData?.live?.streams ?? camera?.live?.streams;
+     if (liveStreams) {
+-      Object.keys(liveStreams).forEach((key) => {
+-        validNames.add(key);
++      Object.values(liveStreams).forEach((name) => {
++        validNames.add(name);
+       });
+     }
+ 
+@@ -224,11 +242,15 @@ export default function CameraEditForm({
+       const camera = config.cameras[cameraName];
+       const rawCameraData = rawPaths.cameras[cameraName];
+ 
++      form.setValue("cameraName", rawCameraData.friendly_name || cameraName);
++      form.setValue("enabled", rawCameraData.enabled ?? camera.enabled);
++
+       // Update ffmpeg inputs with raw paths
+       if (rawCameraData.ffmpeg?.inputs?.length) {
+         form.setValue(
+           "ffmpeg.inputs",
+           rawCameraData.ffmpeg.inputs.map((input) => ({
++            ...input,
+             path: input.path,
+             roles: input.roles as Role[],
+           })),
+@@ -249,9 +271,10 @@ export default function CameraEditForm({
+           }
+         });
+ 
+-        const liveStreams = camera?.live?.streams;
++        const liveStreams =
++          rawCameraData?.live?.streams ?? camera?.live?.streams;
+         if (liveStreams) {
+-          Object.keys(liveStreams).forEach((key) => validNames.add(key));
++          Object.values(liveStreams).forEach((name) => validNames.add(name));
+         }
+ 
+         const cameraStreams: Record<string, string[]> = {};
+@@ -280,10 +303,13 @@ export default function CameraEditForm({
+   const watchedGo2rtcStreams = form.watch("go2rtcStreams") || {};
+ 
+   const saveCameraConfig = (values: FormValues) => {
++    if (cameraName && !rawPaths?.cameras?.[cameraName]) return;
+     setIsLoading(true);
+-    const { finalCameraName, friendlyName } = processCameraName(
+-      values.cameraName,
+-    );
++    const processed = processCameraName(values.cameraName);
++    const finalCameraName = cameraName || processed.finalCameraName;
++    const friendlyName = cameraName
++      ? values.cameraName
++      : processed.friendlyName;
+ 
+     const configData: ConfigSetBody["config_data"] = {
+       cameras: {
+@@ -292,6 +318,7 @@ export default function CameraEditForm({
+           ...(friendlyName && { friendly_name: friendlyName }),
+           ffmpeg: {
+             inputs: values.ffmpeg.inputs.map((input) => ({
++              ...input,
+               path: input.path,
+               roles: input.roles,
+             })),
+@@ -312,52 +339,13 @@ export default function CameraEditForm({
+       config_data: configData,
+     };
+ 
+-    // Add update_topic for new cameras
+-    if (!cameraName) {
+-      requestBody.update_topic = `config/cameras/${finalCameraName}/add`;
+-    }
+-
+     axios
+       .put("config/set", requestBody)
+-      .then((res) => {
+-        if (res.status === 200) {
+-          // Update running go2rtc instance if streams were configured
+-          if (
+-            values.go2rtcStreams &&
+-            Object.keys(values.go2rtcStreams).length > 0
+-          ) {
+-            const updatePromises = Object.entries(values.go2rtcStreams).map(
+-              ([streamName, urls]) =>
+-                axios.put(
+-                  `go2rtc/streams/${streamName}?src=${encodeURIComponent(urls[0])}`,
+-                ),
+-            );
+-
+-            Promise.allSettled(updatePromises).then(() => {
+-              toast.success(
+-                t("cameraManagement.cameraConfig.toast.success", {
+-                  cameraName: values.cameraName,
+-                }),
+-                { position: "top-center" },
+-              );
+-              mutateConfig();
+-              mutateRawPaths();
+-              if (onSave) onSave();
+-            });
+-          } else {
+-            toast.success(
+-              t("cameraManagement.cameraConfig.toast.success", {
+-                cameraName: values.cameraName,
+-              }),
+-              { position: "top-center" },
+-            );
+-            mutateConfig();
+-            mutateRawPaths();
+-            if (onSave) onSave();
+-          }
+-        } else {
+-          throw new Error(res.statusText);
+-        }
++      .then(() => {
++        toast.success("Camera saved. Restart Frigate to apply.");
++        mutateConfig();
++        mutateRawPaths();
++        onSave?.();
+       })
+       .catch((error) => {
+         const errorMessage =
+@@ -374,41 +362,34 @@ export default function CameraEditForm({
+       });
+   };
+ 
+-  const onSubmit = (values: FormValues) => {
++  const onSubmit = (values: FormValues) => saveCameraConfig(values);
++
++  const removeCamera = async () => {
+     if (
+-      cameraName &&
+-      values.cameraName !== cameraName &&
+-      values.cameraName !== cameraInfo?.friendly_name
+-    ) {
+-      // If camera name changed, delete old camera config
+-      const deleteRequestBody = {
++      !cameraName ||
++      !window.confirm(
++        "Remove this camera and its unshared stream sources? Existing recordings are retained. Restart Frigate to apply.",
++      )
++    )
++      return;
++    setIsLoading(true);
++    try {
++      await axios.put("config/set", {
+         requires_restart: 1,
+-        config_data: {
+-          cameras: {
+-            [cameraName]: null,
+-          },
+-        },
+-        update_topic: `config/cameras/${cameraName}/remove`,
+-      };
+-
+-      axios
+-        .put("config/set", deleteRequestBody)
+-        .then(() => saveCameraConfig(values))
+-        .catch((error) => {
+-          const errorMessage =
+-            error.response?.data?.message ||
+-            error.response?.data?.detail ||
+-            "Unknown error";
+-          toast.error(
+-            t("toast.save.error.title", { errorMessage, ns: "common" }),
+-            { position: "top-center" },
+-          );
+-        })
+-        .finally(() => {
+-          setIsLoading(false);
+-        });
+-    } else {
+-      saveCameraConfig(values);
++        config_data: { cameras: { [cameraName]: null } },
++      });
++      toast.success(
++        "Camera removed from configuration. Restart Frigate to apply.",
++      );
++      mutateConfig();
++      mutateRawPaths();
++      onSave?.();
++    } catch {
++      toast.error(
++        "Camera could not be removed. The previous configuration was preserved.",
++      );
++    } finally {
++      setIsLoading(false);
+     }
+   };
+ 
+@@ -444,6 +425,18 @@ export default function CameraEditForm({
+       </div>
+       <Separator className="my-3 bg-secondary" />
+ 
++      {cameraName && !rawPaths && (
++        <div role="status" className="my-3 text-sm">
++          {rawPathsError
++            ? "Could not load private connection settings. Retry before saving."
++            : "Loading camera connection settings…"}
++          {rawPathsError && (
++            <Button variant="outline" onClick={() => mutateRawPaths()}>
++              Retry
++            </Button>
++          )}
++        </div>
++      )}
+       <Form {...form}>
+         <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
+           <FormField
+@@ -451,14 +444,18 @@ export default function CameraEditForm({
+             name="cameraName"
+             render={({ field }) => (
+               <FormItem>
+-                <FormLabel>{t("cameraManagement.cameraConfig.name")}</FormLabel>
++                <FormLabel>
++                  {cameraName
++                    ? "Display name"
++                    : t("cameraManagement.cameraConfig.name")}
++                </FormLabel>
+                 <FormControl>
+                   <Input
+                     placeholder={t(
+                       "cameraManagement.cameraConfig.namePlaceholder",
+                     )}
+                     {...field}
+-                    disabled={!!cameraName} // Prevent editing name for existing cameras
++                    disabled={isLoading}
+                   />
+                 </FormControl>
+                 <FormMessage />
+@@ -722,6 +719,16 @@ export default function CameraEditForm({
+             </div>
+           )}
+ 
++          {cameraName && (
++            <Button
++              type="button"
++              variant="destructive"
++              disabled={isLoading}
++              onClick={removeCamera}
++            >
++              Remove camera
++            </Button>
++          )}
+           <div className="flex w-full flex-row items-center gap-2 pt-2 md:w-[50%]">
+             <Button
+               className="flex flex-1"
+@@ -733,7 +740,10 @@ export default function CameraEditForm({
+             </Button>
+             <Button
+               variant="select"
+-              disabled={isLoading}
++              disabled={
++                isLoading ||
++                (Boolean(cameraName) && !rawPaths?.cameras?.[cameraName!])
++              }
+               className="flex flex-1"
+               aria-label={t("button.save", { ns: "common" })}
+               type="submit"
+diff --git a/web/src/components/settings/CameraWizardDialog.tsx b/web/src/components/settings/CameraWizardDialog.tsx
+index 7496929..9713697 100644
+--- a/web/src/components/settings/CameraWizardDialog.tsx
++++ b/web/src/components/settings/CameraWizardDialog.tsx
+@@ -241,114 +241,30 @@ export default function CameraWizardDialog({
+         });
+       }
+ 
++      const go2rtcStreams: Record<string, string[]> = {};
++      wizardData.streams.forEach((stream, index) => {
++        const name =
++          wizardData.streams!.length === 1
++            ? finalCameraName
++            : `${finalCameraName}_${index + 1}`;
++        const url = stream.useFfmpeg ? `ffmpeg:${stream.url}` : stream.url;
++        go2rtcStreams[name] = wizardData.hasBackchannel
++          ? [`${url}#backchannel=0`, url]
++          : [url];
++      });
++      configData.go2rtc = { streams: go2rtcStreams };
+       const requestBody: ConfigSetBody = {
+         requires_restart: 1,
+         config_data: configData,
+-        update_topic: `config/cameras/${finalCameraName}/add`,
+       };
+-
+       axios
+         .put("config/set", requestBody)
+-        .then((response) => {
+-          if (response.status === 200) {
+-            // Configure go2rtc streams for all streams
+-            if (wizardData.streams && wizardData.streams.length > 0) {
+-              const go2rtcStreams: Record<string, string[]> = {};
+-
+-              wizardData.streams.forEach((stream, index) => {
+-                // Use camera name with index suffix for multiple streams
+-                const streamName =
+-                  wizardData.streams!.length === 1
+-                    ? finalCameraName
+-                    : `${finalCameraName}_${index + 1}`;
+-
+-                const streamUrl = stream.useFfmpeg
+-                  ? `ffmpeg:${stream.url}`
+-                  : stream.url;
+-
+-                if (wizardData.hasBackchannel ?? false) {
+-                  // Add two streams: one with #backchannel=0 and one without
+-                  // in order to avoid taking control of the microphone during connections
+-                  go2rtcStreams[streamName] = [
+-                    `${streamUrl}#backchannel=0`,
+-                    streamUrl,
+-                  ];
+-                } else {
+-                  // Add single stream as normal
+-                  go2rtcStreams[streamName] = [streamUrl];
+-                }
+-              });
+-
+-              if (Object.keys(go2rtcStreams).length > 0) {
+-                // Update frigate go2rtc config for persistence
+-                const go2rtcConfigData = {
+-                  go2rtc: {
+-                    streams: go2rtcStreams,
+-                  },
+-                };
+-
+-                const go2rtcRequestBody = {
+-                  requires_restart: 0,
+-                  config_data: go2rtcConfigData,
+-                };
+-
+-                axios
+-                  .put("config/set", go2rtcRequestBody)
+-                  .then(() => {
+-                    // also update the running go2rtc instance for immediate effect
+-                    const updatePromises = Object.entries(go2rtcStreams).map(
+-                      ([streamName, urls]) =>
+-                        axios.put(
+-                          `go2rtc/streams/${streamName}?src=${encodeURIComponent(urls[0])}`,
+-                        ),
+-                    );
+-
+-                    Promise.allSettled(updatePromises).then(() => {
+-                      toast.success(
+-                        t("cameraWizard.save.success", {
+-                          cameraName: friendlyName || finalCameraName,
+-                        }),
+-                        { position: "top-center" },
+-                      );
+-                      updateConfig();
+-                      onClose();
+-                    });
+-                  })
+-                  .catch(() => {
+-                    // log the error but don't fail the entire save
+-                    toast.warning(
+-                      t("cameraWizard.save.failure", {
+-                        cameraName: friendlyName || finalCameraName,
+-                      }),
+-                      { position: "top-center" },
+-                    );
+-                    updateConfig();
+-                    onClose();
+-                  });
+-              } else {
+-                // No valid streams found
+-                toast.success(
+-                  t("cameraWizard.save.failure", {
+-                    cameraName: friendlyName || finalCameraName,
+-                  }),
+-                  { position: "top-center" },
+-                );
+-                updateConfig();
+-                onClose();
+-              }
+-            } else {
+-              toast.success(
+-                t("camera.cameraConfig.toast.success", {
+-                  cameraName: wizardData.cameraName,
+-                }),
+-                { position: "top-center" },
+-              );
+-              updateConfig();
+-              onClose();
+-            }
+-          } else {
+-            throw new Error(response.statusText);
+-          }
++        .then(() => {
++          toast.success("Camera and streams saved. Restart Frigate to apply.", {
++            position: "top-center",
++          });
++          updateConfig();
++          onClose();
+         })
+         .catch((error) => {
+           const apiError = error as {
+diff --git a/web/src/components/settings/wizard/Step2ProbeOrSnapshot.tsx b/web/src/components/settings/wizard/Step2ProbeOrSnapshot.tsx
+index 7a52c8d..3431c60 100644
+--- a/web/src/components/settings/wizard/Step2ProbeOrSnapshot.tsx
++++ b/web/src/components/settings/wizard/Step2ProbeOrSnapshot.tsx
+@@ -59,10 +59,13 @@ export default function Step2ProbeOrSnapshot({
+       setStatus?: (s: string) => void,
+     ): Promise<TestResult> => {
+       try {
+-        const probeResponse = await axios.get("ffprobe", {
+-          params: { paths: uri, detailed: true },
+-          timeout: 10000,
+-        });
++        const probeResponse = await axios.post(
++          "ffprobe",
++          { paths: uri, detailed: true },
++          {
++            timeout: 10000,
++          },
++        );
+ 
+         let probeData: FfprobeResponse | null = null;
+         if (
+@@ -131,11 +134,14 @@ export default function Step2ProbeOrSnapshot({
+             setStatus(t("cameraWizard.step2.testing.fetchingSnapshot"));
+           }
+           try {
+-            const snapshotResponse = await axios.get("ffprobe/snapshot", {
+-              params: { url: uri },
+-              responseType: "blob",
+-              timeout: 10000,
+-            });
++            const snapshotResponse = await axios.post(
++              "ffprobe/snapshot",
++              { url: uri },
++              {
++                responseType: "blob",
++                timeout: 10000,
++              },
++            );
+             const snapshotBlob = snapshotResponse.data;
+             snapshotBase64 = await new Promise<string>((resolve) => {
+               const reader = new FileReader();
+@@ -184,8 +190,9 @@ export default function Step2ProbeOrSnapshot({
+     setProbeResult(null);
+ 
+     try {
+-      const response = await axios.get("/onvif/probe", {
+-        params: {
++      const response = await axios.post(
++        "/onvif/probe",
++        {
+           host: wizardData.host,
+           port: wizardData.onvifPort ?? 80,
+           username: wizardData.username || "",
+@@ -193,8 +200,8 @@ export default function Step2ProbeOrSnapshot({
+           test: false,
+           auth_type: wizardData.useDigestAuth ? "digest" : "basic",
+         },
+-        timeout: 30000,
+-      });
++        { timeout: 30000 },
++      );
+ 
+       if (response.data && response.data.success) {
+         setProbeResult(response.data);
+diff --git a/web/src/components/settings/wizard/Step3StreamConfig.tsx b/web/src/components/settings/wizard/Step3StreamConfig.tsx
+index 380f0a7..a66bd80 100644
+--- a/web/src/components/settings/wizard/Step3StreamConfig.tsx
++++ b/web/src/components/settings/wizard/Step3StreamConfig.tsx
+@@ -185,8 +185,7 @@ export default function Step3StreamConfig({
+       setTestingStreams((prev) => new Set(prev).add(stream.id));
+ 
+       try {
+-        const response = await axios.get("ffprobe", {
+-          params: { paths: stream.url, detailed: true },
++        const response = await axios.post("ffprobe", { paths: stream.url, detailed: true }, {
+           timeout: 10000,
+         });
+ 
+diff --git a/web/src/components/settings/wizard/Step4Validation.tsx b/web/src/components/settings/wizard/Step4Validation.tsx
+index 8352a1c..6e58c92 100644
+--- a/web/src/components/settings/wizard/Step4Validation.tsx
++++ b/web/src/components/settings/wizard/Step4Validation.tsx
+@@ -69,10 +69,13 @@ export default function Step4Validation({
+   const performStreamValidation = useCallback(
+     async (stream: StreamConfig): Promise<TestResult> => {
+       try {
+-        const response = await axios.get("ffprobe", {
+-          params: { paths: stream.url, detailed: true },
+-          timeout: 10000,
+-        });
++        const response = await axios.post(
++          "ffprobe",
++          { paths: stream.url, detailed: true },
++          {
++            timeout: 10000,
++          },
++        );
+ 
+         if (response.data?.[0]?.return_code === 0) {
+           const probeData = response.data[0];
+@@ -774,9 +777,7 @@ function StreamPreview({
+     // Register stream with go2rtc
+     const streamUrl = stream.useFfmpeg ? `ffmpeg:${stream.url}` : stream.url;
+     axios
+-      .put(`go2rtc/streams/${streamId}`, null, {
+-        params: { src: streamUrl },
+-      })
++      .put(`go2rtc/streams/${streamId}`, { src: streamUrl })
+       .then(async () => {
+         // Add small delay to allow go2rtc api to run and initialize the stream
+         setTimeout(() => {
+diff --git a/web/src/utils/cameraUtil.ts b/web/src/utils/cameraUtil.ts
+index 07295d7..34cea50 100644
+--- a/web/src/utils/cameraUtil.ts
++++ b/web/src/utils/cameraUtil.ts
+@@ -52,12 +52,11 @@ export async function detectReolinkCamera(
+       password,
+     });
+ 
+-    const response = await fetch(
+-      `${baseUrl}api/reolink/detect?${params.toString()}`,
+-      {
+-        method: "GET",
+-      },
+-    );
++    const response = await fetch(`${baseUrl}api/reolink/detect`, {
++      method: "POST",
++      headers: { "Content-Type": "application/json", "X-CSRF-TOKEN": "1" },
++      body: JSON.stringify(Object.fromEntries(params)),
++    });
+ 
+     if (!response.ok) {
+       return null;
+diff --git a/web/src/views/settings/CameraManagementView.tsx b/web/src/views/settings/CameraManagementView.tsx
+index 77231de..b138dce 100644
+--- a/web/src/views/settings/CameraManagementView.tsx
++++ b/web/src/views/settings/CameraManagementView.tsx
+@@ -1,3 +1,5 @@
++import axios from "axios";
++import { toast } from "sonner";
+ import Heading from "@/components/ui/heading";
+ import { useCallback, useEffect, useMemo, useState } from "react";
+ import { Toaster } from "@/components/ui/sonner";
+@@ -35,6 +37,7 @@ export default function CameraManagementView({
+     undefined,
+   ); // Track camera being edited
+   const [showWizard, setShowWizard] = useState(false);
++  const [isRestarting, setIsRestarting] = useState(false);
+ 
+   // List of cameras for dropdown
+   const cameras = useMemo(() => {
+@@ -71,6 +74,31 @@ export default function CameraManagementView({
+               <Heading as="h4" className="mb-2">
+                 {t("cameraManagement.title")}
+               </Heading>
++              <p className="text-sm text-muted-foreground">
++                Saved camera changes take effect after restart. The list below
++                shows the running configuration.
++              </p>
++              <Button
++                className="my-2 w-fit"
++                variant="outline"
++                disabled={isRestarting}
++                onClick={async () => {
++                  setIsRestarting(true);
++                  try {
++                    await axios.post("restart");
++                    toast.success(
++                      "Restarting Frigate. Reload this page when it is ready.",
++                    );
++                  } catch {
++                    setIsRestarting(false);
++                    toast.error(
++                      "Could not restart Frigate. Your saved configuration remains on disk.",
++                    );
++                  }
++                }}
++              >
++                Restart to apply saved changes
++              </Button>
+               <div className="my-4 flex flex-col gap-4">
+                 <Button
+                   variant="select"
+@@ -95,13 +123,22 @@ export default function CameraManagementView({
+                         </Trans>
+                       </div>
+ 
+-                      <div className="max-w-md space-y-2 rounded-lg bg-secondary p-4">
++                      <div className="max-w-2xl space-y-2 rounded-lg bg-secondary p-4">
+                         {cameras.map((camera) => (
+-                          <div
+-                            key={camera}
+-                            className="flex items-center justify-between smart-capitalize"
+-                          >
+-                            <CameraNameLabel camera={camera} />
++                          <div key={camera} className="flex items-center gap-3">
++                            <div className="min-w-0 flex-1">
++                              <CameraNameLabel camera={camera} />
++                            </div>
++                            <Button
++                              size="sm"
++                              variant="outline"
++                              onClick={() => {
++                                setEditCameraName(camera);
++                                setViewMode("edit");
++                              }}
++                            >
++                              Edit camera
++                            </Button>
+                             <CameraEnableSwitch cameraName={camera} />
+                           </div>
+                         ))}
+@@ -161,6 +198,7 @@ function CameraEnableSwitch({ cameraName }: CameraEnableSwitchProps) {
+     <div className="flex flex-row items-center">
+       <Switch
+         id={`camera-enabled-${cameraName}`}
++        aria-label={`Enable ${cameraName}`}
+         checked={enabledState === "ON"}
+         onCheckedChange={(isChecked) => {
+           sendEnabled(isChecked ? "ON" : "OFF");
+diff --git a/frigate/util/netwatch_config.py b/frigate/util/netwatch_config.py
+new file mode 100644
+index 0000000..dd1ec9b
+--- /dev/null
++++ b/frigate/util/netwatch_config.py
+@@ -0,0 +1,112 @@
++"""Durable writes to Frigate's authoritative configuration (no camera registry)."""
++
++import fcntl
++import os
++import tempfile
++from contextlib import contextmanager
++from pathlib import Path
++from threading import RLock
++from urllib.parse import urlsplit
++
++from ruamel.yaml import YAML
++
++from frigate.util.builtin import update_yaml_file_bulk
++
++_lock = RLock()
++
++
++@contextmanager
++def locked_config(path):
++    with _lock:
++        fd = os.open(str(path) + ".lock", os.O_CREAT | os.O_RDWR, 0o600)
++        try:
++            fcntl.flock(fd, fcntl.LOCK_EX)
++            yield
++        finally:
++            os.close(fd)
++
++
++def camera_streams(name, camera):
++    if not camera:
++        return set()
++    streams = {name, *camera.get("live", {}).get("streams", {}).values()}
++    for item in camera.get("ffmpeg", {}).get("inputs", []):
++        path = urlsplit(item.get("path", ""))
++        if path.hostname in {"127.0.0.1", "localhost"} and path.port == 8554:
++            streams.add(path.path.lstrip("/"))
++    return streams
++
++
++def prune_removed_streams(before, after):
++    """Remove sources owned only by deleted cameras; preserve shared sources."""
++    old = before.get("cameras", {}) or {}
++    new = after.get("cameras", {}) or {}
++    removed = set(old) - {name for name, camera in new.items() if camera}
++    candidates = set().union(*(camera_streams(n, old[n]) for n in removed))
++    retained = set().union(*(camera_streams(n, c) for n, c in new.items() if c))
++    streams = after.get("go2rtc", {}).get("streams", {})
++    for name in candidates - retained:
++        streams.pop(name, None)
++    for name in removed:
++        new.pop(name, None)
++
++
++def commit_config(path, validate, *, text=None, updates=None):
++    """Validate privately, fsync and atomically replace; failure keeps the old file."""
++    path = Path(path)
++    with locked_config(path):
++        old_text = path.read_text()
++        fd, temporary = tempfile.mkstemp(
++            prefix=".netwatch-config-", suffix=path.suffix, dir=path.parent
++        )
++        try:
++            with os.fdopen(fd, "w") as out:
++                out.write(old_text if text is None else text)
++            if updates is not None:
++                update_yaml_file_bulk(temporary, updates)
++            yaml = YAML()
++            before = yaml.load(old_text)
++            with open(temporary) as source:
++                after = yaml.load(source)
++            prune_removed_streams(before, after)
++            with open(temporary, "w") as out:
++                yaml.dump(after, out)
++                out.flush()
++                os.fsync(out.fileno())
++            candidate = Path(temporary).read_text()
++            config = validate(candidate)
++            os.replace(temporary, path)
++            directory = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
++            try:
++                os.fsync(directory)
++            finally:
++                os.close(directory)
++            return config
++        finally:
++            Path(temporary).unlink(missing_ok=True)
++
++
++def redact_config(value):
++    """The shared config endpoint must not reveal secrets to authenticated viewers."""
++    if isinstance(value, dict):
++        return {
++            key: redact_config(item)
++            for key, item in value.items()
++            if not isinstance(key, str)
++            or key.lower()
++            not in {
++                "env_vars",
++                "environment_vars",
++                "password",
++                "passwd",
++                "secret",
++                "auth_secret",
++                "token",
++                "access_token",
++                "api_key",
++                "authorization",
++            }
++        }
++    if isinstance(value, list):
++        return [redact_config(item) for item in value]
++    return value

@@ -1,24 +1,19 @@
-FROM node:22-bookworm-slim AS web
-WORKDIR /build
-COPY web/package.json web/package-lock.json ./
-RUN npm ci
-COPY web/ ./
-RUN npm run build
+# Python/media libraries and model assets match the exact patched source revision.
+FROM docker.io/library/node@sha256:83f487e0a63425e5b4d146fb5e5be574bcbe1b7b843d3ebafdd95eaf7767a7e5 AS web
+RUN corepack enable && corepack prepare pnpm@11.3.0 --activate
+WORKDIR /work
+COPY vendor/frigate/web/package.json vendor/frigate/web/pnpm-lock.yaml vendor/frigate/web/pnpm-workspace.yaml ./
+RUN pnpm install --frozen-lockfile
+COPY vendor/frigate/web/ ./
+RUN pnpm run build && mv dist/BASE_PATH/monacoeditorwork/* dist/assets/ && rm -rf dist/BASE_PATH
 
-FROM ghcr.io/astral-sh/uv:0.12.3 AS uv
-FROM python:3.12-slim-bookworm AS runtime
-COPY --from=uv /uv /usr/local/bin/uv
-RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg \
-    && rm -rf /var/lib/apt/lists/* \
-    && groupadd --gid 10001 edge && useradd --uid 10001 --gid edge --no-create-home edge
-WORKDIR /app
-COPY pyproject.toml uv.lock ./
-COPY edge/ ./edge/
-RUN uv sync --frozen --no-dev --no-cache \
-    && mkdir /app/data && chown edge:edge /app/data && chmod 700 /app/data
-COPY --from=web /build/dist ./web/dist/
-ENV CCTV_DATA_DIR=/app/data CCTV_WEB_DIR=/app/web/dist PYTHONDONTWRITEBYTECODE=1
-USER edge
-EXPOSE 8000
-HEALTHCHECK --interval=30s --timeout=5s CMD ["/app/.venv/bin/python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=3)"]
-CMD ["/app/.venv/bin/uvicorn", "edge.app:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000", "--no-access-log"]
+FROM ghcr.io/blakeblackshear/frigate@sha256:d4351369984d4a9e2a49ac59736f6490856a7ea11f7790040746d21496967010
+LABEL org.opencontainers.image.title="Netwatch" \
+      org.opencontainers.image.description="Controlled Frigate 0.17.2 foundation" \
+      org.opencontainers.image.base.name="ghcr.io/blakeblackshear/frigate:0.17.2" \
+      video.netwatch.upstream-revision="3d4dd3ac4b00e7257bd3412608a783001d7d77ed"
+COPY vendor/frigate/frigate/ /opt/frigate/frigate/
+COPY vendor/frigate/docker/main/rootfs/usr/local/nginx/conf/nginx.conf /usr/local/nginx/conf/nginx.conf
+COPY vendor/frigate/docker/main/rootfs/usr/local/go2rtc/create_config.py /usr/local/go2rtc/create_config.py
+COPY --from=web /work/dist/ /opt/frigate/web/
+# Frigate, go2rtc, FFmpeg, migrations, models, notices and s6 remain in the matching base.

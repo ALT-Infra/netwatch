@@ -3,30 +3,25 @@ on: [push, pull_request]
 permissions:
   contents: read
 jobs:
-  test:
+  foundation:
     runs-on: ubuntu-latest
+    env:
+      NETWATCH_ENGINE: docker
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
         with:
           version: "0.12.3"
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-          cache: npm
-          cache-dependency-path: web/package-lock.json
       - run: uv sync --frozen --python 3.12
-      - run: uv run ruff check edge tests integrations/frigate/prepare.py
+      - run: uv run ruff check scripts tests integrations/frigate/prepare.py
+      - run: uv run integrations/frigate/prepare.py
+      - run: uv run scripts/local.py --engine docker build
       - run: uv run pytest -q
-      - run: npm ci
-        working-directory: web
-      - run: npm run build
-        working-directory: web
-      - run: npx playwright install --with-deps chromium
-        working-directory: web
-      - run: npm run test:e2e
-        working-directory: web
-      - run: uv run python -m edge.setup
-      - run: docker compose up --build --wait --wait-timeout 120
+      - run: uv run scripts/local.py init
+      - run: uv run scripts/local.py --engine docker start
+      - run: uv run scripts/verify_runtime.py --engine docker --keep-demo
+      - run: uv run scripts/verify_browser.py --engine docker
       - if: always()
-        run: docker compose down
+        run: docker logs --tail 100 netwatch-local
+      - if: always()
+        run: uv run scripts/local.py --engine docker stop

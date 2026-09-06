@@ -1,24 +1,18 @@
 [project]
-name = "netwatch-edge"
+name = "netwatch"
 version = "0.1.0"
-description = "Local camera onboarding for AI-Augmented CCTV"
+description = "Controlled Frigate foundation: preparation and runtime verification"
 requires-python = ">=3.12"
-dependencies = [
-  "fastapi>=0.115,<1",
-  "uvicorn>=0.34,<1",
-  "cryptography>=44,<49",
-  "pyyaml>=6,<7",
-]
+dependencies = []
 
 [dependency-groups]
-dev = ["pytest>=8,<10", "httpx>=0.28,<1", "ruff>=0.11,<1"]
-
-[build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
-
-[tool.hatch.build.targets.wheel]
-packages = ["edge"]
+dev = [
+    "pytest>=8,<10",
+    "httpx>=0.28,<1",
+    "ruff>=0.11,<1",
+    "pyyaml>=6,<7",
+    "selenium>=4.30,<5",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

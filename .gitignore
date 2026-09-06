@@ -1,3 +1,20 @@
+# Local research, source checkouts and generated artifacts
+notes/
+papers/
+sources/
+repos/
+rendered/
+*.pdf
+*.pth
+*.pt
+*.onnx
+*.bin
+*.mp4
+*.db
+*.key
+*.pem
+*.crt
+*.log
 .env
 .env.*
 !.env.example
@@ -10,11 +27,5 @@ __pycache__/
 data/
 vendor/
 node_modules/
-web/dist/
-web/test-results/
-web/playwright-report/
-web/*.tsbuildinfo
-*.pdf
 .agents/
 .codex/
-audit.md
