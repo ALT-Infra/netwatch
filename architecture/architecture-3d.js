@@ -26,6 +26,9 @@
     ["outbox","Export gate","optional"], ["specialist","Specialist","optional"],
     ["desktop","Desktop review","adapt"], ["cloud","Optional hosting","optional"]
   ];
+  const picker = document.getElementById("component-select");
+  picker.replaceChildren(...componentInfo.map(([id, title]) => new Option(title, id, false, id === "incident")));
+  picker.addEventListener("change", () => selectNode(picker.value));
   const labelRoot = document.getElementById("scene-labels");
   const labelButtons = new Map();
   const anchors = new Map();
@@ -333,7 +336,7 @@
   document.getElementById("reset-scene").addEventListener("click",reset);
   document.getElementById("explode").addEventListener("input",e=>{state.explode=Number(e.target.value)/100;document.getElementById("explode-value").textContent=e.target.value+"%";schedule();});
   document.querySelectorAll("[data-select]").forEach(b=>b.addEventListener("click",()=>selectNode(b.dataset.select)));
-  window.addEventListener("architecture-select",e=>{state.selected=e.detail.id;schedule();});
+  window.addEventListener("architecture-select",e=>{state.selected=e.detail.id;picker.value=e.detail.id;schedule();});
   window.addEventListener("architecture-view",e=>{state.online=e.detail.online;state.first=e.detail.firstView;schedule();});
   function setMode(threeD){
     document.getElementById("physical-view").hidden=!threeD;document.getElementById("protocol-view").hidden=threeD;

@@ -1,0 +1,25 @@
+[project]
+name = "netwatch"
+version = "0.1.0"
+description = "Controlled Frigate foundation: preparation and runtime verification"
+requires-python = ">=3.12"
+dependencies = []
+
+[dependency-groups]
+dev = [
+    "pytest>=8,<10",
+    "httpx>=0.28,<1",
+    "ruff>=0.11,<1",
+    "pyyaml>=6,<7",
+    "selenium>=4.30,<5",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]

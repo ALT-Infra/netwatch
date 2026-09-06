@@ -1,0 +1,15 @@
+services:
+  frigate:
+    image: localhost/netwatch:local
+    build: .
+    ports:
+      - "127.0.0.1:8971:8971"
+    volumes:
+      - ./data/config:/config
+      - ./data/media:/media/frigate
+    shm_size: "256mb"
+    tmpfs:
+      - /tmp/cache:size=256m
+    security_opt: [no-new-privileges:true]
+    restart: unless-stopped
+    stop_grace_period: 30s

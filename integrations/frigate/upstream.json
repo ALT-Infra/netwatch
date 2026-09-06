@@ -1,0 +1,10 @@
+{
+  "repository": "https://github.com/blakeblackshear/frigate.git",
+  "tag": "v0.17.2",
+  "commit": "3d4dd3ac4b00e7257bd3412608a783001d7d77ed",
+  "patches": [
+    "patches/0001-netwatch-foundation.patch"
+  ],
+  "status": "Local controlled foundation; production security and camera hardware qualification remain",
+  "image": "ghcr.io/blakeblackshear/frigate@sha256:d4351369984d4a9e2a49ac59736f6490856a7ea11f7790040746d21496967010"
+}

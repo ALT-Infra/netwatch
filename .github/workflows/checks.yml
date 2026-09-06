@@ -1,0 +1,31 @@
+name: Checks
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  foundation:
+    runs-on: ubuntu-latest
+    env:
+      NETWATCH_ENGINE: docker
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.12.3"
+      - run: uv sync --frozen --python 3.12
+      - run: uv run ruff check scripts tests integrations/frigate/prepare.py
+      - run: uv run integrations/frigate/prepare.py
+      - run: uv run scripts/local.py --engine docker build
+      - run: uv run pytest -q
+      - run: uv run scripts/local.py init
+      - run: uv run scripts/local.py --engine docker start
+      - run: uv run scripts/verify_runtime.py --engine docker --keep-demo
+      # Firefox decodes H.264 MSE via the system libavcodec, which the runner
+      # image does not ship; without it MediaSource.isTypeSupported rejects
+      # every avc1/mp4a codec and the preview can never produce a frame.
+      - run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - run: uv run scripts/verify_browser.py --engine docker
+      - if: always()
+        run: docker logs --tail 600 netwatch-local
+      - if: always()
+        run: uv run scripts/local.py --engine docker stop

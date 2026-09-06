@@ -1,0 +1,47 @@
+# Local authenticated camera management. Detection and recording are explicit opt-ins.
+mqtt:
+  enabled: false
+auth:
+  enabled: true
+  cookie_secure: false
+  failed_login_rate_limit: "5/minute"
+tls:
+  enabled: false
+telemetry:
+  version_check: false
+semantic_search:
+  enabled: false
+face_recognition:
+  enabled: false
+lpr:
+  enabled: false
+classification:
+  bird:
+    enabled: false
+go2rtc:
+  api:
+    listen: "127.0.0.1:1984"
+  rtsp:
+    listen: "127.0.0.1:8554"
+  webrtc:
+    candidates: []
+detectors:
+  ov:
+    type: openvino
+    device: CPU
+model:
+  width: 300
+  height: 300
+  input_tensor: nhwc
+  input_pixel_format: bgr
+  path: /openvino-model/ssdlite_mobilenet_v2.xml
+  labelmap_path: /openvino-model/coco_91cl_bkgr.txt
+objects:
+  track: [person]
+detect:
+  enabled: false
+record:
+  enabled: false
+snapshots:
+  enabled: false
+cameras: {}
