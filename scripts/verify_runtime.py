@@ -187,6 +187,9 @@ def main():
         "-c",
         "from frigate.config.camera.ffmpeg import FfmpegConfig; print(FfmpegConfig().ffmpeg_path)",
     ).strip()
+    # Real cameras emit a keyframe every 1-2s; the MSE preview handshake and
+    # the snapshot grab both block until the next keyframe. Force a 1s GOP so
+    # a slow CI runner never waits out the player's 3s startup deadline.
     container(
         ffmpeg,
         "-hide_banner",
@@ -204,6 +207,8 @@ def main():
         "libx264",
         "-preset",
         "ultrafast",
+        "-g",
+        "10",
         "-pix_fmt",
         "yuv420p",
         "/media/frigate/netwatch-fixture.mp4",

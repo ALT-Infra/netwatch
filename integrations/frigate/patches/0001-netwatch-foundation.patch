@@ -542,6 +542,124 @@ index 867d253..5d6cc60 100644
  
  
  def escape_special_characters(path: str) -> str:
+diff --git a/frigate/util/netwatch_config.py b/frigate/util/netwatch_config.py
+new file mode 100644
+index 0000000..dd1ec9b
+--- /dev/null
++++ b/frigate/util/netwatch_config.py
+@@ -0,0 +1,112 @@
++"""Durable writes to Frigate's authoritative configuration (no camera registry)."""
++
++import fcntl
++import os
++import tempfile
++from contextlib import contextmanager
++from pathlib import Path
++from threading import RLock
++from urllib.parse import urlsplit
++
++from ruamel.yaml import YAML
++
++from frigate.util.builtin import update_yaml_file_bulk
++
++_lock = RLock()
++
++
++@contextmanager
++def locked_config(path):
++    with _lock:
++        fd = os.open(str(path) + ".lock", os.O_CREAT | os.O_RDWR, 0o600)
++        try:
++            fcntl.flock(fd, fcntl.LOCK_EX)
++            yield
++        finally:
++            os.close(fd)
++
++
++def camera_streams(name, camera):
++    if not camera:
++        return set()
++    streams = {name, *camera.get("live", {}).get("streams", {}).values()}
++    for item in camera.get("ffmpeg", {}).get("inputs", []):
++        path = urlsplit(item.get("path", ""))
++        if path.hostname in {"127.0.0.1", "localhost"} and path.port == 8554:
++            streams.add(path.path.lstrip("/"))
++    return streams
++
++
++def prune_removed_streams(before, after):
++    """Remove sources owned only by deleted cameras; preserve shared sources."""
++    old = before.get("cameras", {}) or {}
++    new = after.get("cameras", {}) or {}
++    removed = set(old) - {name for name, camera in new.items() if camera}
++    candidates = set().union(*(camera_streams(n, old[n]) for n in removed))
++    retained = set().union(*(camera_streams(n, c) for n, c in new.items() if c))
++    streams = after.get("go2rtc", {}).get("streams", {})
++    for name in candidates - retained:
++        streams.pop(name, None)
++    for name in removed:
++        new.pop(name, None)
++
++
++def commit_config(path, validate, *, text=None, updates=None):
++    """Validate privately, fsync and atomically replace; failure keeps the old file."""
++    path = Path(path)
++    with locked_config(path):
++        old_text = path.read_text()
++        fd, temporary = tempfile.mkstemp(
++            prefix=".netwatch-config-", suffix=path.suffix, dir=path.parent
++        )
++        try:
++            with os.fdopen(fd, "w") as out:
++                out.write(old_text if text is None else text)
++            if updates is not None:
++                update_yaml_file_bulk(temporary, updates)
++            yaml = YAML()
++            before = yaml.load(old_text)
++            with open(temporary) as source:
++                after = yaml.load(source)
++            prune_removed_streams(before, after)
++            with open(temporary, "w") as out:
++                yaml.dump(after, out)
++                out.flush()
++                os.fsync(out.fileno())
++            candidate = Path(temporary).read_text()
++            config = validate(candidate)
++            os.replace(temporary, path)
++            directory = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
++            try:
++                os.fsync(directory)
++            finally:
++                os.close(directory)
++            return config
++        finally:
++            Path(temporary).unlink(missing_ok=True)
++
++
++def redact_config(value):
++    """The shared config endpoint must not reveal secrets to authenticated viewers."""
++    if isinstance(value, dict):
++        return {
++            key: redact_config(item)
++            for key, item in value.items()
++            if not isinstance(key, str)
++            or key.lower()
++            not in {
++                "env_vars",
++                "environment_vars",
++                "password",
++                "passwd",
++                "secret",
++                "auth_secret",
++                "token",
++                "access_token",
++                "api_key",
++                "authorization",
++            }
++        }
++    if isinstance(value, list):
++        return [redact_config(item) for item in value]
++    return value
 diff --git a/web/package.json b/web/package.json
 index 46d6670..f7c9e82 100644
 --- a/web/package.json
@@ -600,6 +718,59 @@ index a15d9c5..39d445f 100644
        })
        .then((res) => {
          if (res.status === 200) {
+diff --git a/web/src/components/player/MsePlayer.tsx b/web/src/components/player/MsePlayer.tsx
+index 1a2b1b6..016f5bd 100644
+--- a/web/src/components/player/MsePlayer.tsx
++++ b/web/src/components/player/MsePlayer.tsx
+@@ -28,6 +28,11 @@ type MSEPlayerProps = {
+   onPlaying?: () => void;
+   setFullResolution?: React.Dispatch<SetStateAction<VideoResolutionType>>;
+   onError?: (error: LivePlayerError) => void;
++  // Override for the MSE startup handshake deadline (ms). Defaults to the
++  // user's live-view fallback timeout. The enrollment preview may legitimately
++  // need longer on slow machines where go2rtc's cold producer start (RTSP
++  // self-pull + first keyframe) exceeds the 3s live-view default.
++  startupTimeoutMs?: number;
+ };
+ 
+ function MSEPlayer({
+@@ -43,6 +48,7 @@ function MSEPlayer({
+   onPlaying,
+   setFullResolution,
+   onError,
++  startupTimeoutMs,
+ }: MSEPlayerProps) {
+   const RECONNECT_TIMEOUT: number = 10000;
+   const BUFFERING_COOLDOWN_TIMEOUT: number = 5000;
+@@ -77,6 +83,10 @@ function MSEPlayer({
+     3,
+   );
+ 
++  // Live views keep the user's (default 3s) deadline; callers such as the
++  // enrollment preview can allow a slower cold start via startupTimeoutMs.
++  const startupTimeout = startupTimeoutMs ?? (fallbackTimeout ?? 3) * 1000;
++
+   const videoRef = useRef<HTMLVideoElement>(null);
+   const wsRef = useRef<WebSocket | null>(null);
+   const reconnectTIDRef = useRef<number | null>(null);
+@@ -378,7 +388,7 @@ function MSEPlayer({
+               // @ts-expect-error for typing
+               value: codecs(MediaSource.isTypeSupported),
+             },
+-            (fallbackTimeout ?? 3) * 1000,
++            startupTimeout,
+           ).catch(() => {
+             if (wsRef.current) {
+               onDisconnect();
+@@ -408,7 +418,7 @@ function MSEPlayer({
+               type: "mse",
+               value: codecs(MediaSource.isTypeSupported),
+             },
+-            (fallbackTimeout ?? 3) * 1000,
++            startupTimeout,
+           ).catch(() => {
+             // Only report errors if we actually had a connection that failed
+             // If WS wasn't connected, this is a stale sourceopen event from a previous connection
 diff --git a/web/src/components/settings/CameraEditForm.tsx b/web/src/components/settings/CameraEditForm.tsx
 index 50db138..ff2dd15 100644
 --- a/web/src/components/settings/CameraEditForm.tsx
@@ -1158,7 +1329,7 @@ index 380f0a7..a66bd80 100644
          });
  
 diff --git a/web/src/components/settings/wizard/Step4Validation.tsx b/web/src/components/settings/wizard/Step4Validation.tsx
-index 8352a1c..6e58c92 100644
+index 8352a1c..d0b951a 100644
 --- a/web/src/components/settings/wizard/Step4Validation.tsx
 +++ b/web/src/components/settings/wizard/Step4Validation.tsx
 @@ -69,10 +69,13 @@ export default function Step4Validation({
@@ -1190,6 +1361,17 @@ index 8352a1c..6e58c92 100644
        .then(async () => {
          // Add small delay to allow go2rtc api to run and initialize the stream
          setTimeout(() => {
+@@ -854,6 +855,10 @@ function StreamPreview({
+         getStats={true}
+         setStats={handleStats}
+         onError={() => setError(true)}
++        // Enrollment preview of a just-registered go2rtc stream can wait out
++        // a slow cold producer start; the enrollment check still requires a
++        // real decoded frame (videoWidth > 0) before saving.
++        startupTimeoutMs={15000}
+       />
+     </div>
+   );
 diff --git a/web/src/utils/cameraUtil.ts b/web/src/utils/cameraUtil.ts
 index 07295d7..34cea50 100644
 --- a/web/src/utils/cameraUtil.ts
@@ -1299,121 +1481,3 @@ index 77231de..b138dce 100644
          checked={enabledState === "ON"}
          onCheckedChange={(isChecked) => {
            sendEnabled(isChecked ? "ON" : "OFF");
-diff --git a/frigate/util/netwatch_config.py b/frigate/util/netwatch_config.py
-new file mode 100644
-index 0000000..dd1ec9b
---- /dev/null
-+++ b/frigate/util/netwatch_config.py
-@@ -0,0 +1,112 @@
-+"""Durable writes to Frigate's authoritative configuration (no camera registry)."""
-+
-+import fcntl
-+import os
-+import tempfile
-+from contextlib import contextmanager
-+from pathlib import Path
-+from threading import RLock
-+from urllib.parse import urlsplit
-+
-+from ruamel.yaml import YAML
-+
-+from frigate.util.builtin import update_yaml_file_bulk
-+
-+_lock = RLock()
-+
-+
-+@contextmanager
-+def locked_config(path):
-+    with _lock:
-+        fd = os.open(str(path) + ".lock", os.O_CREAT | os.O_RDWR, 0o600)
-+        try:
-+            fcntl.flock(fd, fcntl.LOCK_EX)
-+            yield
-+        finally:
-+            os.close(fd)
-+
-+
-+def camera_streams(name, camera):
-+    if not camera:
-+        return set()
-+    streams = {name, *camera.get("live", {}).get("streams", {}).values()}
-+    for item in camera.get("ffmpeg", {}).get("inputs", []):
-+        path = urlsplit(item.get("path", ""))
-+        if path.hostname in {"127.0.0.1", "localhost"} and path.port == 8554:
-+            streams.add(path.path.lstrip("/"))
-+    return streams
-+
-+
-+def prune_removed_streams(before, after):
-+    """Remove sources owned only by deleted cameras; preserve shared sources."""
-+    old = before.get("cameras", {}) or {}
-+    new = after.get("cameras", {}) or {}
-+    removed = set(old) - {name for name, camera in new.items() if camera}
-+    candidates = set().union(*(camera_streams(n, old[n]) for n in removed))
-+    retained = set().union(*(camera_streams(n, c) for n, c in new.items() if c))
-+    streams = after.get("go2rtc", {}).get("streams", {})
-+    for name in candidates - retained:
-+        streams.pop(name, None)
-+    for name in removed:
-+        new.pop(name, None)
-+
-+
-+def commit_config(path, validate, *, text=None, updates=None):
-+    """Validate privately, fsync and atomically replace; failure keeps the old file."""
-+    path = Path(path)
-+    with locked_config(path):
-+        old_text = path.read_text()
-+        fd, temporary = tempfile.mkstemp(
-+            prefix=".netwatch-config-", suffix=path.suffix, dir=path.parent
-+        )
-+        try:
-+            with os.fdopen(fd, "w") as out:
-+                out.write(old_text if text is None else text)
-+            if updates is not None:
-+                update_yaml_file_bulk(temporary, updates)
-+            yaml = YAML()
-+            before = yaml.load(old_text)
-+            with open(temporary) as source:
-+                after = yaml.load(source)
-+            prune_removed_streams(before, after)
-+            with open(temporary, "w") as out:
-+                yaml.dump(after, out)
-+                out.flush()
-+                os.fsync(out.fileno())
-+            candidate = Path(temporary).read_text()
-+            config = validate(candidate)
-+            os.replace(temporary, path)
-+            directory = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
-+            try:
-+                os.fsync(directory)
-+            finally:
-+                os.close(directory)
-+            return config
-+        finally:
-+            Path(temporary).unlink(missing_ok=True)
-+
-+
-+def redact_config(value):
-+    """The shared config endpoint must not reveal secrets to authenticated viewers."""
-+    if isinstance(value, dict):
-+        return {
-+            key: redact_config(item)
-+            for key, item in value.items()
-+            if not isinstance(key, str)
-+            or key.lower()
-+            not in {
-+                "env_vars",
-+                "environment_vars",
-+                "password",
-+                "passwd",
-+                "secret",
-+                "auth_secret",
-+                "token",
-+                "access_token",
-+                "api_key",
-+                "authorization",
-+            }
-+        }
-+    if isinstance(value, list):
-+        return [redact_config(item) for item in value]
-+    return value

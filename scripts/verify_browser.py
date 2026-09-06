@@ -9,6 +9,7 @@ from pathlib import Path
 import httpx
 import yaml
 from selenium import webdriver
+from selenium.common.exceptions import TimeoutException
 from selenium.webdriver.common.by import By
 from selenium.webdriver.firefox.options import Options
 from selenium.webdriver.support import expected_conditions as EC
@@ -120,11 +121,65 @@ def main():
             '/following-sibling::*[@role="switch"]',
         ).click()
         click("Next")
-        wait.until(
-            lambda d: d.execute_script(
-                "return [...document.querySelectorAll('video')].some(v => v.videoWidth > 0)"
-            )
+        # Firefox decodes H.264 MSE via the system libavcodec. If the runner
+        # lacks it, MediaSource rejects every avc1/mp4a codec and no preview
+        # can ever produce a frame: fail fast with a clear cause instead of
+        # burning the 120s playback deadline. The videoWidth gate below still
+        # decides pass/fail when decoding is available.
+        supported = driver.execute_script(
+            "return MediaSource.isTypeSupported('video/mp4; codecs=\"avc1.640029\"')"
         )
+        assert supported, (
+            "Firefox reports no H.264 MSE support "
+            "(MediaSource.isTypeSupported avc1.640029 is false); "
+            "install system FFmpeg/libavcodec on this runner"
+        )
+        # Software decoding of the restream is slow on CI runners; give the
+        # preview video a generous deadline before declaring failure.
+        try:
+            WebDriverWait(driver, 120).until(
+                lambda d: d.execute_script(
+                    "return [...document.querySelectorAll('video')].some(v => v.videoWidth > 0)"
+                )
+            )
+        except TimeoutException:
+            print("DIAG: preview video never decoded; dumping player state", flush=True)
+            print(
+                driver.execute_script(
+                    "return JSON.stringify({"
+                    " codecs: ['avc1.640029','avc1.64002A','avc1.640033',"
+                    "  'hvc1.1.6.L153.B0','mp4a.40.2','opus'].map(c => {"
+                    "   let s = false;"
+                    "   try { s = MediaSource.isTypeSupported("
+                    "    'video/mp4; codecs=\"' + c + '\"') } catch (e) {};"
+                    "   return c + '=' + s }) ,"
+                    " videos: [...document.querySelectorAll('video')].map(v => ({"
+                    "  w: v.videoWidth, h: v.videoHeight,"
+                    "  rs: v.readyState, ns: v.networkState,"
+                    "  err: v.error ? v.error.code : 0, src: v.currentSrc }))})"
+                ),
+                flush=True,
+            )
+            try:
+                streams = subprocess.check_output(
+                    [
+                        args.engine,
+                        "exec",
+                        NAME,
+                        "python3",
+                        "-c",
+                        (
+                            "import requests;"
+                            " print(requests.get("
+                            "'http://127.0.0.1:1984/api/streams').text)"
+                        ),
+                    ],
+                    text=True,
+                )
+                print(f"DIAG: go2rtc streams: {streams[:2000]}", flush=True)
+            except subprocess.CalledProcessError as exc:
+                print(f"DIAG: go2rtc streams query failed: {exc}", flush=True)
+            raise
         click("Save New Camera")
         wait.until(EC.invisibility_of_element_located((By.CSS_SELECTOR, '[role="dialog"]')))
         writes = driver.execute_script("return window.netwatchWrites")
@@ -188,7 +243,8 @@ def main():
         driver.switch_to.frame(frame)
         wait.until(
             lambda d: d.execute_script(
-                "return innerWidth === 390 && document.documentElement.scrollWidth <= innerWidth"
+                "return innerWidth === 390 && document.documentElement"
+                " && document.documentElement.scrollWidth <= innerWidth"
                 " && [...document.querySelectorAll('video')].some(v => v.videoWidth > 0)"
             )
         )

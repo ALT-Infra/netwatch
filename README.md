@@ -8,9 +8,11 @@ module described in [report.typ](report.typ) remains to be implemented.
 
 ## Run locally
 
-Install **uv**, **Podman or Docker**, and **Firefox**. Initial preparation/build needs network
+Install **uv**, **Podman or Docker**, **Firefox**, and **FFmpeg**. Initial preparation/build needs network
 access. Python tooling uses Python 3.12 through uv; the image preserves Frigate's matching Python
-runtime. The container builds the frontend with pinned Node 22 and pnpm 11.3.0.
+runtime. The container builds the frontend with pinned Node 22 and pnpm 11.3.0. Firefox decodes
+the H.264 preview via the system libavcodec, so it must be present (e.g. `sudo apt-get install -y
+ffmpeg` on Ubuntu); without it the browser rejects every avc1/mp4a MSE codec and playback checks fail.
 
 ```bash
 uv sync --frozen --python 3.12
