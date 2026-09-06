@@ -22,6 +22,63 @@ FIXTURE = "netwatch_synthetic_test"
 BASE = "http://127.0.0.1:8971"
 
 
+DIAGNOSTIC_PROCESS_TIMEOUT = 8
+
+
+def dump_go2rtc_streams(engine):
+    """Diagnostics must finish even when the media service or container engine hangs."""
+    try:
+        streams = subprocess.check_output(
+            [
+                engine,
+                "exec",
+                NAME,
+                "python3",
+                "-c",
+                "import requests; "
+                "response = requests.get('http://127.0.0.1:1984/api/streams', timeout=(2, 3)); "
+                "response.raise_for_status(); print(response.text[:2000])",
+            ],
+            text=True,
+            timeout=DIAGNOSTIC_PROCESS_TIMEOUT,
+        )
+        print(f"DIAG: go2rtc streams: {streams[:2000]}", flush=True)
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
+        print(f"DIAG: go2rtc streams unavailable ({type(exc).__name__})", flush=True)
+
+
+def inject_preview_delay(driver):
+    """Delay actual WebSocket sends; leave the player and its deadline unchanged."""
+    driver.execute_script("""
+        const NativeWebSocket = window.WebSocket;
+        const test = window.netwatchPreviewTest = {mode: 'withhold', attempts: []};
+        window.WebSocket = class extends NativeWebSocket {
+            send(data) {
+                if (this.url.includes('/live/mse/api/ws?src=wizard_')
+                    && typeof data === 'string' && JSON.parse(data).type === 'mse') {
+                    const attempt = {mode: test.mode, started: performance.now()};
+                    test.attempts.push(attempt);
+                    this.addEventListener('close', () => {
+                        attempt.closedAfter = performance.now() - attempt.started;
+                    }, {once: true});
+                    if (test.mode === 'withhold') return;
+                    if (test.mode === 'delay') {
+                        setTimeout(() => {
+                            if (this.readyState === NativeWebSocket.OPEN) {
+                                attempt.sentAfter = performance.now() - attempt.started;
+                                super.send(data);
+                            }
+                        }, 4000);
+                        return;
+                    }
+                }
+                super.send(data);
+            }
+        };
+        test.restore = () => { window.WebSocket = NativeWebSocket; };
+    """)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--engine", default="podman" if shutil.which("podman") else "docker")
@@ -120,6 +177,7 @@ def main():
             '//*[normalize-space(text())="Reduce connections to camera"]'
             '/following-sibling::*[@role="switch"]',
         ).click()
+        inject_preview_delay(driver)
         click("Next")
         # Firefox decodes H.264 MSE via the system libavcodec. If the runner
         # lacks it, MediaSource rejects every avc1/mp4a codec and no preview
@@ -134,8 +192,25 @@ def main():
             "(MediaSource.isTypeSupported avc1.640029 is false); "
             "install system FFmpeg/libavcodec on this runner"
         )
-        # Software decoding of the restream is slow on CI runners; give the
-        # preview video a generous deadline before declaring failure.
+        # Negative control: the actual player must reject an unanswered handshake.
+        wait.until(
+            EC.visibility_of_element_located(
+                (By.XPATH, '//*[normalize-space(text())="Stream preview unavailable"]')
+            )
+        )
+        wait.until(
+            lambda d: d.execute_script(
+                "return window.netwatchPreviewTest.attempts.some(a => a.closedAfter !== undefined)"
+            )
+        )
+        attempts = driver.execute_script("return window.netwatchPreviewTest.attempts")
+        assert len(attempts) == 1 and attempts[0]["mode"] == "withhold", attempts
+        assert 14000 <= attempts[0]["closedAfter"] <= 20000, attempts
+        assert driver.execute_script("return window.netwatchWrites") == []
+        # Recovery control: delay the real handshake beyond the former 3s deadline.
+        driver.execute_script("window.netwatchPreviewTest.mode = 'delay'")
+        click("Reload")
+        # This is a test budget, not a claim about the cause of historical CI failures.
         try:
             WebDriverWait(driver, 120).until(
                 lambda d: d.execute_script(
@@ -160,26 +235,29 @@ def main():
                 ),
                 flush=True,
             )
-            try:
-                streams = subprocess.check_output(
-                    [
-                        args.engine,
-                        "exec",
-                        NAME,
-                        "python3",
-                        "-c",
-                        (
-                            "import requests;"
-                            " print(requests.get("
-                            "'http://127.0.0.1:1984/api/streams').text)"
-                        ),
-                    ],
-                    text=True,
-                )
-                print(f"DIAG: go2rtc streams: {streams[:2000]}", flush=True)
-            except subprocess.CalledProcessError as exc:
-                print(f"DIAG: go2rtc streams query failed: {exc}", flush=True)
+            dump_go2rtc_streams(args.engine)
             raise
+        attempts = driver.execute_script("return window.netwatchPreviewTest.attempts")
+        delayed = [a for a in attempts if a["mode"] == "delay"]
+        assert len(delayed) == 1 and delayed[0].get("sentAfter", 0) >= 4000, attempts
+        # Dimensions alone can be available at metadata time. Require advancing frames too.
+        frames = driver.execute_script(
+            "return document.querySelector('video').getVideoPlaybackQuality().totalVideoFrames"
+        )
+        wait.until(
+            lambda d: (
+                d.execute_script(
+                    "return document.querySelector('video')"
+                    ".getVideoPlaybackQuality().totalVideoFrames"
+                )
+                > frames
+            )
+        )
+        driver.execute_script("window.netwatchPreviewTest.restore()")
+        print(
+            "PASS: withheld handshake times out; 4s delay recovers with advancing video",
+            flush=True,
+        )
         click("Save New Camera")
         wait.until(EC.invisibility_of_element_located((By.CSS_SELECTOR, '[role="dialog"]')))
         writes = driver.execute_script("return window.netwatchWrites")

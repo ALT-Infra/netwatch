@@ -8,11 +8,11 @@ module described in [report.typ](report.typ) remains to be implemented.
 
 ## Run locally
 
-Install **uv**, **Podman or Docker**, **Firefox**, and **FFmpeg**. Initial preparation/build needs network
-access. Python tooling uses Python 3.12 through uv; the image preserves Frigate's matching Python
-runtime. The container builds the frontend with pinned Node 22 and pnpm 11.3.0. Firefox decodes
-the H.264 preview via the system libavcodec, so it must be present (e.g. `sudo apt-get install -y
-ffmpeg` on Ubuntu); without it the browser rejects every avc1/mp4a MSE codec and playback checks fail.
+Install **uv**, **Podman or Docker**, and **Firefox with H.264 playback support**. Initial
+preparation/build needs network access. Python tooling uses Python 3.12 through uv; the image
+preserves Frigate's matching Python runtime. The container builds the frontend with pinned
+Node 22 and pnpm 11.3.0. On Ubuntu, install `ffmpeg` on the browser machine to supply Firefox's
+system codec libraries. These are separate from the media binaries inside the application image.
 
 ```bash
 uv sync --frozen --python 3.12
@@ -76,7 +76,8 @@ uv run pytest -q
 ```
 
 The Python tests require the built image and exercise its actual Frigate parser: invalid and
-concurrent writes, failed replacement, private file permissions, removal and redaction.
+concurrent writes, failed replacement, private file permissions, removal and redaction. Two host
+tests also check that stalled or failed diagnostics preserve the original browser-test failure.
 To check a **disposable instance with no configured cameras**, start it using the helper and run:
 
 ```bash
@@ -87,8 +88,12 @@ uv run scripts/verify_browser.py
 Runtime verification checks authentication, protected endpoints, secret handling, real FFmpeg
 decoding, persistence and restart/removal. It leaves one clearly labeled synthetic video feed.
 The Firefox test adds, previews, edits and removes another fixture, verifies live playback and
-checks a 390px embedded viewport (Firefox limits top-level window width). It requires the retained runtime fixture; both scripts refuse unrelated
-camera configurations. Selenium Manager may download its Firefox driver on first use. Synthetic
+checks a 390px embedded viewport (Firefox limits top-level window width). It withholds a preview
+handshake to check bounded failure, then delays one by four seconds and requires advancing video
+frames. This validates the enrollment timeout policy; it does not attribute prior CI failures to
+slow cameras. The one-second keyframe fixture does not qualify longer camera keyframe intervals.
+The browser check requires the retained runtime fixture; both scripts refuse unrelated camera
+configurations. Selenium Manager may download its Firefox driver on first use. Synthetic
 video verifies the application lifecycle, not physical camera compatibility or detection accuracy.
 CI runs the same image, Python, runtime and Firefox checks with Docker.
 

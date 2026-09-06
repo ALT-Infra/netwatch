@@ -719,7 +719,7 @@ index a15d9c5..39d445f 100644
        .then((res) => {
          if (res.status === 200) {
 diff --git a/web/src/components/player/MsePlayer.tsx b/web/src/components/player/MsePlayer.tsx
-index 1a2b1b6..016f5bd 100644
+index 1a2b1b6..3a5c518 100644
 --- a/web/src/components/player/MsePlayer.tsx
 +++ b/web/src/components/player/MsePlayer.tsx
 @@ -28,6 +28,11 @@ type MSEPlayerProps = {
@@ -727,9 +727,9 @@ index 1a2b1b6..016f5bd 100644
    setFullResolution?: React.Dispatch<SetStateAction<VideoResolutionType>>;
    onError?: (error: LivePlayerError) => void;
 +  // Override for the MSE startup handshake deadline (ms). Defaults to the
-+  // user's live-view fallback timeout. The enrollment preview may legitimately
-+  // need longer on slow machines where go2rtc's cold producer start (RTSP
-+  // self-pull + first keyframe) exceeds the 3s live-view default.
++  // user's live-view fallback timeout. Enrollment allows a longer bounded
++  // handshake, verified with an injected delay; this is not a measurement
++  // of camera startup times or an explanation of the missing-codec CI failure.
 +  startupTimeoutMs?: number;
  };
  
@@ -1329,7 +1329,7 @@ index 380f0a7..a66bd80 100644
          });
  
 diff --git a/web/src/components/settings/wizard/Step4Validation.tsx b/web/src/components/settings/wizard/Step4Validation.tsx
-index 8352a1c..d0b951a 100644
+index 8352a1c..a621ea4 100644
 --- a/web/src/components/settings/wizard/Step4Validation.tsx
 +++ b/web/src/components/settings/wizard/Step4Validation.tsx
 @@ -69,10 +69,13 @@ export default function Step4Validation({
@@ -1365,9 +1365,9 @@ index 8352a1c..d0b951a 100644
          getStats={true}
          setStats={handleStats}
          onError={() => setError(true)}
-+        // Enrollment preview of a just-registered go2rtc stream can wait out
-+        // a slow cold producer start; the enrollment check still requires a
-+        // real decoded frame (videoWidth > 0) before saving.
++        // Bounded enrollment handshake budget. The Firefox check injects a
++        // 4s delay and an unanswered handshake to verify success and failure.
++        // Missing browser codecs require a codec install, not a longer timeout.
 +        startupTimeoutMs={15000}
        />
      </div>

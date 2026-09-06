@@ -187,9 +187,8 @@ def main():
         "-c",
         "from frigate.config.camera.ffmpeg import FfmpegConfig; print(FfmpegConfig().ffmpeg_path)",
     ).strip()
-    # Real cameras emit a keyframe every 1-2s; the MSE preview handshake and
-    # the snapshot grab both block until the next keyframe. Force a 1s GOP so
-    # a slow CI runner never waits out the player's 3s startup deadline.
+    # Use a declared 1s keyframe interval for this deterministic fixture.
+    # Camera GOPs vary; this does not qualify long-GOP sources or measure their startup time.
     container(
         ffmpeg,
         "-hide_banner",
